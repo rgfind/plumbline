@@ -55,29 +55,58 @@ contract, on the same terms it enforces on any other crate. All three
 4. packaged-allowlist — always.
 5. generated-fresh — only when generated blocks declared (plumb declares none).
 
-## What is NOT done: Phase 4 — publish to crates.io
+## rf: the consumer, and where the external use stands
+
+Corrected 2026-09-13 after inspecting rf. Earlier drafts of this handoff said rf
+had never published and plumbline had never guarded a real publish. The first is
+flat wrong; the second is only partly true.
+
+- **rf is a live published crate.** On crates.io as `rf` (repo rgfind/rf),
+  currently 0.0.5, 5 versions, 75 downloads. rf has shipped five times.
+- **rf already builds its publish flow on plumbline.** `rf/RELEASING.md` makes
+  `plumb preflight` exit 0 the stop-sign before `cargo publish` (5 gates).
+  `rf/.github/workflows/contract-guard.yml` installs plumbline from git each run
+  and runs `plumb check` + `plumb capture --check` on every push/PR.
+  `rf/plumbline.json` is a mature 13-claim self-contract with a generated README
+  block. All 5 preflight gates pass on rf's current 0.0.5 tree.
+- **The guard evolved.** rf first guarded with an in-repo `xtask preflight`, then
+  switched to external plumbline (rf commit 74abc1b, "Replace in-repo xtask
+  guardrail with external plumbline tool"). That switch is recent, so rf's next
+  release (0.0.6) is likely the first publish guarded by plumbline-as-external-
+  tool rather than the old xtask. THAT is the accurate acid test — not
+  "first-ever external use."
+
+## What is NOT done: Phase 4 — publish plumbline itself to crates.io
 
 Phase 4 is the ultimate acid test, not a dogfooding reward. plumbline can not be
 a truly rigorous tool until it is used on itself in the process of being
-published to crates.io. The machinery that makes the publish "the acid test" now
-exists and passes locally. But plumbline is NOT ready for that step: it needs
-real external use first (it has one consumer, rf, and has never guarded a real
-publish). crates.io is write-once, so the bar is high.
+published to crates.io. The machinery now exists and passes locally (the
+self-contract). Still not ready: plumbline should first guard a real rf release
+as the external tool, and likely wants a crates.io-cold README and a version
+verb. crates.io is write-once, so the bar is high. Docs-in-lockstep rule stands.
 
-Docs-in-lockstep rule stands: docs must progress in lockstep with code at the
-moment of publishing to crates.io.
+## Two concrete gaps found while inspecting rf (2026-09-13)
+
+1. **The installed `plumb` is stale.** `~/.cargo/bin/plumb` predates this
+   session — its usage line lacks `capabilities`. RELEASING.md tells a releaser
+   to run `plumb preflight` locally, so they run the old binary. It still guards
+   rf correctly (rf's gates do not need plumb's own `capabilities`), but refresh
+   it: `cargo install --git https://github.com/rgfind/plumbline.git plumbline
+   --locked --force`.
+2. **rf CI runs only `check` + `capture --check`, never full `preflight`.** The
+   worktree-clean, packaged-allowlist, and generated-fresh gates run only at
+   manual release. A packaged-leak or stale generated block could land on rf's
+   main undetected until release day. A tag-triggered CI job running full
+   `plumb preflight` closes this.
 
 ## Next actions, ranked
 
-1. **Let plumbline earn its publish through use.** Wire rf's real publish flow
-   to call `plumb preflight` as the pre-publish gate and run it on rf's next
-   actual release. That is the external use plumbline needs before its own
-   Phase 4. (rf's contract fixture lives at
-   `rf/tests/fixtures/contract/capabilities.rc.json`.)
-2. Consider whether plumb needs a `--version` and a `README` that a crates.io
-   visitor reads cold, before any publish.
-3. Phase 4 itself (publish plumb to crates.io) — only after 1 has happened at
-   least once for real.
+1. **Guard rf's next release (0.0.6) with external plumbline, for real.** That
+   is the confirmed external use plumbline needs before its own Phase 4.
+2. Close gap 2: add a tag-triggered `plumb preflight` job to rf CI.
+3. Refresh the stale local `plumb` install (gap 1).
+4. Give plumb a crates.io-cold README and a `--version`, then Phase 4 (publish
+   plumb itself) — only after 1.
 
 ## Watch-outs for the next session
 
