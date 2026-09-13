@@ -5,6 +5,7 @@
 //! the specifics now arrive through `Config`.
 
 use crate::config::{Capture, Generated};
+use crate::diagnostic::{codes, Diagnostic};
 use serde_json::Value;
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -16,8 +17,10 @@ fn bin_path(root: &Path, name: &str) -> PathBuf {
 }
 
 /// Run a build command (e.g. ["cargo","build","--bin","rf"]) in the crate root.
-pub fn run_build(root: &Path, build: &[String]) -> Result<(), String> {
-    let (prog, args) = build.split_first().ok_or("capture.build is empty")?;
+pub fn run_build(root: &Path, build: &[String]) -> Result<(), Diagnostic> {
+    let (prog, args) = build
+        .split_first()
+        .ok_or_else(|| Diagnostic::new(codes::CONFIG_SCHEMA, "capture.build is empty"))?;
     let prog = if prog == "cargo" {
         cargo()
     } else {
@@ -27,36 +30,53 @@ pub fn run_build(root: &Path, build: &[String]) -> Result<(), String> {
         .args(args)
         .current_dir(root)
         .status()
-        .map_err(|e| format!("run build `{}`: {e}", build.join(" ")))?;
+        .map_err(|e| {
+            Diagnostic::new(
+                codes::BUILD_FAILED,
+                format!("run build `{}`: {e}", build.join(" ")),
+            )
+        })?;
     if status.success() {
         Ok(())
     } else {
-        Err(format!("build `{}` failed", build.join(" ")))
+        Err(Diagnostic::new(
+            codes::BUILD_FAILED,
+            format!("build `{}` failed", build.join(" ")),
+        ))
     }
 }
 
 /// Build, then run the capture command under the configured env, and parse its
 /// stdout as the JSON contract envelope.
-pub fn capture(root: &Path, capture: &Capture) -> Result<Value, String> {
+pub fn capture(root: &Path, capture: &Capture) -> Result<Value, Diagnostic> {
     run_build(root, &capture.build)?;
     let (name, args) = capture
         .command
         .split_first()
-        .ok_or("capture.command is empty")?;
+        .ok_or_else(|| Diagnostic::new(codes::CONFIG_SCHEMA, "capture.command is empty"))?;
     let out = Command::new(bin_path(root, name))
         .args(args)
         .envs(&capture.env)
         .current_dir(root)
         .output()
-        .map_err(|e| format!("run capture command: {e}"))?;
+        .map_err(|e| {
+            Diagnostic::new(
+                codes::CAPTURE_RUN_FAILED,
+                format!("run capture command: {e}"),
+            )
+        })?;
     if !out.status.success() {
-        return Err(format!(
-            "capture command exited {}",
-            out.status.code().unwrap_or(-1)
+        return Err(Diagnostic::new(
+            codes::CAPTURE_RUN_FAILED,
+            format!("capture command exited {}", out.status.code().unwrap_or(-1)),
         ));
     }
-    serde_json::from_slice(&out.stdout)
-        .map_err(|e| format!("captured output is not valid JSON: {e}"))
+    serde_json::from_slice(&out.stdout).map_err(|e| {
+        Diagnostic::new(
+            codes::CAPTURE_NOT_JSON,
+            format!("captured output is not valid JSON: {e}"),
+        )
+    })
 }
 
 /// Render one generated block from a real run of the binary. Lays down the
@@ -66,24 +86,28 @@ pub fn capture(root: &Path, capture: &Capture) -> Result<Value, String> {
 ///
 /// Precondition: the binary is already built. Callers build once (via
 /// `run_build`) before rendering, so a batch of blocks shares one build.
-pub fn render_block(root: &Path, gen: &Generated) -> Result<String, String> {
+pub fn render_block(root: &Path, gen: &Generated) -> Result<String, Diagnostic> {
     let tree = make_tree(&gen.tree)?;
-    let (name, args) = gen.render.split_first().ok_or("render command is empty")?;
+    let (name, args) = gen
+        .render
+        .split_first()
+        .ok_or_else(|| Diagnostic::new(codes::CONFIG_SCHEMA, "render command is empty"))?;
     let result = Command::new(bin_path(root, name))
         .args(args)
         .envs(&gen.env)
         .current_dir(&tree)
         .output()
-        .map_err(|e| format!("run render command: {e}"));
+        .map_err(|e| Diagnostic::new(codes::RENDER_FAILED, format!("run render command: {e}")));
     std::fs::remove_dir_all(&tree).ok();
     let out = result?;
     if !out.status.success() {
-        return Err(format!(
-            "render command exited {}",
-            out.status.code().unwrap_or(-1)
+        return Err(Diagnostic::new(
+            codes::RENDER_FAILED,
+            format!("render command exited {}", out.status.code().unwrap_or(-1)),
         ));
     }
-    let rendered = String::from_utf8(out.stdout).map_err(|e| format!("render not UTF-8: {e}"))?;
+    let rendered = String::from_utf8(out.stdout)
+        .map_err(|e| Diagnostic::new(codes::RENDER_FAILED, format!("render not UTF-8: {e}")))?;
     let body = rendered.trim_end_matches('\n');
     if gen.prompt.is_empty() {
         Ok(format!("```\n{body}\n```"))
@@ -95,7 +119,7 @@ pub fn render_block(root: &Path, gen: &Generated) -> Result<String, String> {
 /// Lay down a sample tree's declared files in a fresh temp dir, optionally as a
 /// git repo (so vcs-aware behavior is live). Returns the tree root; the caller
 /// removes it. Files are written with parent dirs created as needed.
-fn make_tree(tree: &crate::config::SampleTree) -> Result<PathBuf, String> {
+fn make_tree(tree: &crate::config::SampleTree) -> Result<PathBuf, Diagnostic> {
     let dir = std::env::temp_dir().join(format!(
         "plumbline-sample-{}-{}",
         std::process::id(),
@@ -104,24 +128,31 @@ fn make_tree(tree: &crate::config::SampleTree) -> Result<PathBuf, String> {
             .map(|d| d.as_nanos())
             .unwrap_or(0)
     ));
-    std::fs::create_dir_all(&dir).map_err(|e| format!("mkdir sample tree: {e}"))?;
+    std::fs::create_dir_all(&dir)
+        .map_err(|e| Diagnostic::new(codes::RENDER_FAILED, format!("mkdir sample tree: {e}")))?;
     if tree.git_init {
         let init = Command::new("git")
             .args(["init", "-q"])
             .current_dir(&dir)
             .status()
-            .map_err(|e| format!("git init: {e}"))?;
+            .map_err(|e| Diagnostic::new(codes::RENDER_FAILED, format!("git init: {e}")))?;
         if !init.success() {
             std::fs::remove_dir_all(&dir).ok();
-            return Err("git init failed in sample tree".into());
+            return Err(Diagnostic::new(
+                codes::RENDER_FAILED,
+                "git init failed in sample tree",
+            ));
         }
     }
     for (name, contents) in &tree.files {
         let path = dir.join(name);
         if let Some(parent) = path.parent() {
-            std::fs::create_dir_all(parent).map_err(|e| format!("mkdir for {name}: {e}"))?;
+            std::fs::create_dir_all(parent).map_err(|e| {
+                Diagnostic::new(codes::RENDER_FAILED, format!("mkdir for {name}: {e}"))
+            })?;
         }
-        std::fs::write(&path, contents).map_err(|e| format!("write {name}: {e}"))?;
+        std::fs::write(&path, contents)
+            .map_err(|e| Diagnostic::new(codes::RENDER_FAILED, format!("write {name}: {e}")))?;
     }
     Ok(dir)
 }
@@ -140,12 +171,13 @@ const CARGO_META: &[&str] = &[
 /// Run `cargo package --list` and confirm every packaged file is cargo metadata
 /// or matches an `include` glob from Cargo.toml. Returns a note on success, and
 /// on failure the list of files that would leak into the archive.
-pub fn packaged_within_allowlist(root: &Path, allowlist: &str) -> Result<String, String> {
+pub fn packaged_within_allowlist(root: &Path, allowlist: &str) -> Result<String, Diagnostic> {
     let globs = match allowlist {
         "cargo-include" => cargo_include_globs(root)?,
         other => {
-            return Err(format!(
-                "unknown package_allowlist `{other}`; only `cargo-include` is supported"
+            return Err(Diagnostic::new(
+                codes::ALLOWLIST_UNKNOWN,
+                format!("unknown package_allowlist `{other}`; only `cargo-include` is supported"),
             ))
         }
     };
@@ -153,11 +185,19 @@ pub fn packaged_within_allowlist(root: &Path, allowlist: &str) -> Result<String,
         .args(["package", "--list", "--quiet"])
         .current_dir(root)
         .output()
-        .map_err(|e| format!("run cargo package --list: {e}"))?;
+        .map_err(|e| {
+            Diagnostic::new(
+                codes::PACKAGE_LIST_FAILED,
+                format!("run cargo package --list: {e}"),
+            )
+        })?;
     if !out.status.success() {
-        return Err(format!(
-            "cargo package --list failed:\n{}",
-            String::from_utf8_lossy(&out.stderr).trim()
+        return Err(Diagnostic::new(
+            codes::PACKAGE_LIST_FAILED,
+            format!(
+                "cargo package --list failed:\n{}",
+                String::from_utf8_lossy(&out.stderr).trim()
+            ),
         ));
     }
     let listing = String::from_utf8_lossy(&out.stdout);
@@ -172,10 +212,13 @@ pub fn packaged_within_allowlist(root: &Path, allowlist: &str) -> Result<String,
     if stray.is_empty() {
         Ok(format!("{count} file(s), all within the allowlist"))
     } else {
-        Err(format!(
-            "{} packaged file(s) outside the allowlist:\n{}",
-            stray.len(),
-            stray.join("\n")
+        Err(Diagnostic::new(
+            codes::PACKAGED_LEAK,
+            format!(
+                "{} packaged file(s) outside the allowlist:\n{}",
+                stray.len(),
+                stray.join("\n")
+            ),
         ))
     }
 }
@@ -192,17 +235,21 @@ fn path_is_allowed(p: &str, globs: &[String]) -> bool {
 /// of one well-known array of string literals, not a general TOML parser: it
 /// keeps plumbline's single-dependency promise while making Cargo.toml the one
 /// source of truth for what ships (no separate allowlist to drift).
-fn cargo_include_globs(root: &Path) -> Result<Vec<String>, String> {
+fn cargo_include_globs(root: &Path) -> Result<Vec<String>, Diagnostic> {
     let text = std::fs::read_to_string(root.join("Cargo.toml"))
-        .map_err(|e| format!("read Cargo.toml: {e}"))?;
+        .map_err(|e| Diagnostic::new(codes::CONFIG_SCHEMA, format!("read Cargo.toml: {e}")))?;
     let start = text
         .find("include")
         .and_then(|i| text[i..].find('[').map(|j| i + j + 1))
-        .ok_or("Cargo.toml has no `include` array")?;
-    let end = text[start..]
-        .find(']')
-        .map(|j| start + j)
-        .ok_or("Cargo.toml `include` array is unterminated")?;
+        .ok_or_else(|| {
+            Diagnostic::new(codes::CONFIG_SCHEMA, "Cargo.toml has no `include` array")
+        })?;
+    let end = text[start..].find(']').map(|j| start + j).ok_or_else(|| {
+        Diagnostic::new(
+            codes::CONFIG_SCHEMA,
+            "Cargo.toml `include` array is unterminated",
+        )
+    })?;
     let mut globs = Vec::new();
     for raw in text[start..end].split(',') {
         let g = raw.trim().trim_matches('"');
@@ -211,7 +258,10 @@ fn cargo_include_globs(root: &Path) -> Result<Vec<String>, String> {
         }
     }
     if globs.is_empty() {
-        return Err("Cargo.toml `include` array is empty".into());
+        return Err(Diagnostic::new(
+            codes::CONFIG_SCHEMA,
+            "Cargo.toml `include` array is empty",
+        ));
     }
     Ok(globs)
 }

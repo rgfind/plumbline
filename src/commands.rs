@@ -11,6 +11,7 @@
 //!              `cargo publish` and exit non-zero unless all pass.
 
 use crate::config::{Capture, Config};
+use crate::diagnostic::{codes, Diagnostic};
 use crate::engine;
 use crate::markers::{extract_generated, generated_ids, replace_generated};
 use crate::registry::{check_claims, normalized};
@@ -18,15 +19,26 @@ use serde_json::Value;
 use std::path::Path;
 use std::process::Command;
 
-fn read_json(path: &Path) -> Result<Value, String> {
-    let text =
-        std::fs::read_to_string(path).map_err(|e| format!("read {}: {e}", path.display()))?;
-    serde_json::from_str(&text).map_err(|e| format!("parse {}: {e}", path.display()))
+/// Read and parse a committed fixture. Both a read failure and a parse failure
+/// mean the same thing to a consumer: the fixture on disk could not be loaded.
+fn read_json(path: &Path) -> Result<Value, Diagnostic> {
+    let text = std::fs::read_to_string(path).map_err(|e| {
+        Diagnostic::new(
+            codes::FIXTURE_UNREADABLE,
+            format!("read {}: {e}", path.display()),
+        )
+    })?;
+    serde_json::from_str(&text).map_err(|e| {
+        Diagnostic::new(
+            codes::FIXTURE_UNREADABLE,
+            format!("parse {}: {e}", path.display()),
+        )
+    })
 }
 
 // ---- check -----------------------------------------------------------------
 
-pub fn cmd_check(cfg: &Config) -> Result<(), String> {
+pub fn cmd_check(cfg: &Config) -> Result<(), Diagnostic> {
     let n = check_docs_against_fixture(cfg)?;
     println!("plumbline: {n} registered claim(s) match the committed fixture");
     Ok(())
@@ -37,27 +49,41 @@ pub fn cmd_check(cfg: &Config) -> Result<(), String> {
 ///
 /// When the config declares no fixture, there are no claims to check (the loader
 /// forbids claims without a fixture), so this reduces to the stray-block scan.
-fn check_docs_against_fixture(cfg: &Config) -> Result<usize, String> {
-    let mut failures = Vec::new();
+fn check_docs_against_fixture(cfg: &Config) -> Result<usize, Diagnostic> {
+    // Claim drift and stray blocks are distinct faults with distinct codes, so
+    // check claims first and report CLAIM_DRIFT before scanning for STRAY_BLOCK.
     let claim_count = match &cfg.fixture {
         Some(f) => {
             let fixture = read_json(&cfg.root.join(f))?;
-            failures.extend(check_claims(&fixture, &cfg.claims));
+            let failures = check_claims(&fixture, &cfg.claims);
+            if !failures.is_empty() {
+                return Err(Diagnostic::new(
+                    codes::CLAIM_DRIFT,
+                    format!(
+                        "{} claim(s) no longer equal the fixture:\n  {}",
+                        failures.len(),
+                        failures.join("\n  ")
+                    ),
+                ));
+            }
             cfg.claims.len()
         }
         None => 0,
     };
 
     let known: Vec<&str> = cfg.generated.iter().map(|g| g.id.as_str()).collect();
+    let mut stray = Vec::new();
     for surface in &cfg.surfaces {
         let p = cfg.root.join(surface);
         if !p.exists() {
             continue;
         }
-        let text = std::fs::read_to_string(&p).map_err(|e| format!("read {surface}: {e}"))?;
+        let text = std::fs::read_to_string(&p).map_err(|e| {
+            Diagnostic::new(codes::SURFACE_UNREADABLE, format!("read {surface}: {e}"))
+        })?;
         for id in generated_ids(&text) {
             if !known.contains(&id.as_str()) {
-                failures.push(format!(
+                stray.push(format!(
                     "[{surface}] GENERATED block `{id}` has no renderer; add it to the config's \
                      `generated` list, or remove the block"
                 ));
@@ -65,20 +91,23 @@ fn check_docs_against_fixture(cfg: &Config) -> Result<usize, String> {
         }
     }
 
-    if failures.is_empty() {
+    if stray.is_empty() {
         Ok(claim_count)
     } else {
-        Err(format!(
-            "{} claim(s) failed:\n  {}",
-            failures.len(),
-            failures.join("\n  ")
+        Err(Diagnostic::new(
+            codes::STRAY_BLOCK,
+            format!(
+                "{} stray GENERATED block(s):\n  {}",
+                stray.len(),
+                stray.join("\n  ")
+            ),
         ))
     }
 }
 
 // ---- capture ---------------------------------------------------------------
 
-pub fn cmd_capture(cfg: &Config, check_only: bool) -> Result<(), String> {
+pub fn cmd_capture(cfg: &Config, check_only: bool) -> Result<(), Diagnostic> {
     let (capture, fixture) = require_contract(cfg)?;
 
     if check_only {
@@ -91,22 +120,29 @@ pub fn cmd_capture(cfg: &Config, check_only: bool) -> Result<(), String> {
 
     let fixture_path = cfg.root.join(fixture);
     let captured = engine::capture(&cfg.root, capture)?;
-    let mut text =
-        serde_json::to_string_pretty(&captured).map_err(|e| format!("serialize: {e}"))?;
+    let mut text = serde_json::to_string_pretty(&captured)
+        .map_err(|e| Diagnostic::new(codes::WRITE_FAILED, format!("serialize fixture: {e}")))?;
     text.push('\n');
-    std::fs::write(&fixture_path, text).map_err(|e| format!("write {fixture}: {e}"))?;
+    std::fs::write(&fixture_path, text)
+        .map_err(|e| Diagnostic::new(codes::WRITE_FAILED, format!("write {fixture}: {e}")))?;
     println!("plumbline: rewrote {fixture} from a fresh capture");
 
     // The capture above already built the binary; render every block from it.
     for gen in &cfg.generated {
         let surface_path = cfg.root.join(&gen.surface);
-        let doc = std::fs::read_to_string(&surface_path)
-            .map_err(|e| format!("read {}: {e}", gen.surface))?;
+        let doc = std::fs::read_to_string(&surface_path).map_err(|e| {
+            Diagnostic::new(
+                codes::SURFACE_UNREADABLE,
+                format!("read {}: {e}", gen.surface),
+            )
+        })?;
         let block = engine::render_block(&cfg.root, gen)?;
-        let updated = replace_generated(&doc, &gen.id, &block)?;
+        let updated = replace_generated(&doc, &gen.id, &block)
+            .map_err(|e| Diagnostic::new(codes::MARKER_MISSING, e))?;
         if updated != doc {
-            std::fs::write(&surface_path, updated)
-                .map_err(|e| format!("write {}: {e}", gen.surface))?;
+            std::fs::write(&surface_path, updated).map_err(|e| {
+                Diagnostic::new(codes::WRITE_FAILED, format!("write {}: {e}", gen.surface))
+            })?;
             println!("plumbline: regenerated `{}` in {}", gen.id, gen.surface);
         } else {
             println!("plumbline: `{}` in {} already current", gen.id, gen.surface);
@@ -118,34 +154,38 @@ pub fn cmd_capture(cfg: &Config, check_only: bool) -> Result<(), String> {
 /// Both `capture` verbs and the fixture-freshness gate need a declared capture
 /// command and a committed fixture. A contract-less crate has neither; refuse
 /// cleanly rather than unwrap a `None`.
-fn require_contract(cfg: &Config) -> Result<(&Capture, &str), String> {
+fn require_contract(cfg: &Config) -> Result<(&Capture, &str), Diagnostic> {
     match (&cfg.capture, &cfg.fixture) {
         (Some(c), Some(f)) => Ok((c, f.as_str())),
-        _ => Err("this crate declares no `capture`/`fixture`; \
-                  there is no contract to capture"
-            .into()),
+        _ => Err(Diagnostic::new(
+            codes::NO_CONTRACT,
+            "this crate declares no `capture`/`fixture`; there is no contract to capture",
+        )),
     }
 }
 
 /// Assert the committed fixture is contract-equivalent to a fresh capture from
 /// the binary being packaged. Shared by `capture --check` and `preflight`.
-fn fixture_matches_binary(cfg: &Config) -> Result<(), String> {
+fn fixture_matches_binary(cfg: &Config) -> Result<(), Diagnostic> {
     let (capture, fixture) = require_contract(cfg)?;
     let captured = engine::capture(&cfg.root, capture)?;
     let committed = read_json(&cfg.root.join(fixture))?;
     if normalized(&captured, &cfg.normalize_meta) == normalized(&committed, &cfg.normalize_meta) {
         Ok(())
     } else {
-        Err(format!(
-            "committed fixture {fixture} is STALE: a fresh capture differs. \
-             Run `plumb capture` and reconcile the docs."
+        Err(Diagnostic::new(
+            codes::FIXTURE_STALE,
+            format!(
+                "committed fixture {fixture} is STALE: a fresh capture differs. \
+                 Run `plumb capture` and reconcile the docs."
+            ),
         ))
     }
 }
 
 // ---- preflight (the publish stop-sign) -------------------------------------
 
-pub fn cmd_preflight(cfg: &Config) -> Result<(), String> {
+pub fn cmd_preflight(cfg: &Config) -> Result<(), Diagnostic> {
     let name = cfg
         .capture
         .as_ref()
@@ -158,7 +198,7 @@ pub fn cmd_preflight(cfg: &Config) -> Result<(), String> {
     // (fixture freshness) is present only when the crate declares a contract to
     // capture; gate 5 (generated blocks) only when it declares blocks. A
     // contract-less crate (like plumbline) runs the universal gates alone.
-    type Gate<'a> = (&'a str, Box<dyn Fn() -> Result<String, String> + 'a>);
+    type Gate<'a> = (&'a str, Box<dyn Fn() -> Result<String, Diagnostic> + 'a>);
     let mut gates: Vec<Gate> = vec![(
         "worktree clean and committed",
         Box::new(|| gate_worktree_clean(cfg)),
@@ -196,10 +236,12 @@ pub fn cmd_preflight(cfg: &Config) -> Result<(), String> {
         let step = i + 1;
         match run() {
             Ok(note) => println!("  [{step}/{total}] PASS  {label} — {note}"),
-            Err(e) => {
+            Err(d) => {
                 failures += 1;
                 println!("  [{step}/{total}] FAIL  {label}");
-                for line in e.lines() {
+                // Print the failing gate's own diagnostic, code and all, so the
+                // leaf code (for example `[STRAY_BLOCK]`) is visible per gate.
+                for line in d.to_string().lines() {
                     println!("            {line}");
                 }
             }
@@ -210,25 +252,29 @@ pub fn cmd_preflight(cfg: &Config) -> Result<(), String> {
         println!("preflight: OK — every gate passed; safe to `cargo publish`");
         Ok(())
     } else {
-        Err(format!(
-            "{failures} gate(s) failed; do NOT `cargo publish` until each is green"
+        Err(Diagnostic::new(
+            codes::PREFLIGHT_FAILED,
+            format!("{failures} gate(s) failed; do NOT `cargo publish` until each is green"),
         ))
     }
 }
 
 /// Gate: the git worktree has no uncommitted changes. `cargo publish` packages
 /// the working tree, so an untidy tree could ship un-reviewed files.
-fn gate_worktree_clean(cfg: &Config) -> Result<String, String> {
+fn gate_worktree_clean(cfg: &Config) -> Result<String, Diagnostic> {
     let out = Command::new("git")
         .args(["status", "--porcelain"])
         .current_dir(&cfg.root)
         .output()
-        .map_err(|e| format!("run git status: {e}"))?;
+        .map_err(|e| Diagnostic::new(codes::GIT_UNAVAILABLE, format!("run git status: {e}")))?;
     if !out.status.success() {
-        return Err(format!(
-            "git status exited {}: {}",
-            out.status.code().unwrap_or(-1),
-            String::from_utf8_lossy(&out.stderr).trim()
+        return Err(Diagnostic::new(
+            codes::GIT_UNAVAILABLE,
+            format!(
+                "git status exited {}: {}",
+                out.status.code().unwrap_or(-1),
+                String::from_utf8_lossy(&out.stderr).trim()
+            ),
         ));
     }
     let listing = String::from_utf8_lossy(&out.stdout);
@@ -236,10 +282,13 @@ fn gate_worktree_clean(cfg: &Config) -> Result<String, String> {
     if dirty.is_empty() {
         Ok("no uncommitted changes".into())
     } else {
-        Err(format!(
-            "{} uncommitted path(s); commit or stash before publishing:\n{}",
-            dirty.len(),
-            dirty.join("\n")
+        Err(Diagnostic::new(
+            codes::WORKTREE_DIRTY,
+            format!(
+                "{} uncommitted path(s); commit or stash before publishing:\n{}",
+                dirty.len(),
+                dirty.join("\n")
+            ),
         ))
     }
 }
@@ -247,27 +296,40 @@ fn gate_worktree_clean(cfg: &Config) -> Result<String, String> {
 /// Gate: every generated block equals a fresh render from the binary. crates.io
 /// ships the docs verbatim and write-once, so a block that no longer matches real
 /// output would mislead every reader of the published page.
-fn generated_blocks_fresh(cfg: &Config) -> Result<String, String> {
+fn generated_blocks_fresh(cfg: &Config) -> Result<String, Diagnostic> {
     // Generated blocks render from the binary, so a capture must be declared
     // (the loader enforces this pairing; guard rather than unwrap).
-    let capture = cfg
-        .capture
-        .as_ref()
-        .ok_or("generated blocks declared without a `capture`")?;
+    let capture = cfg.capture.as_ref().ok_or_else(|| {
+        Diagnostic::new(
+            codes::CONFIG_INCOHERENT,
+            "generated blocks declared without a `capture`",
+        )
+    })?;
     // Build once up front so all blocks render from the same binary.
     engine::run_build(&cfg.root, &capture.build)?;
     let mut checked = 0usize;
     for gen in &cfg.generated {
-        let doc = std::fs::read_to_string(cfg.root.join(&gen.surface))
-            .map_err(|e| format!("read {}: {e}", gen.surface))?;
-        let committed = extract_generated(&doc, &gen.id)
-            .ok_or_else(|| format!("{} has no `{}` GENERATED block", gen.surface, gen.id))?;
+        let doc = std::fs::read_to_string(cfg.root.join(&gen.surface)).map_err(|e| {
+            Diagnostic::new(
+                codes::SURFACE_UNREADABLE,
+                format!("read {}: {e}", gen.surface),
+            )
+        })?;
+        let committed = extract_generated(&doc, &gen.id).ok_or_else(|| {
+            Diagnostic::new(
+                codes::MARKER_MISSING,
+                format!("{} has no `{}` GENERATED block", gen.surface, gen.id),
+            )
+        })?;
         let fresh = engine::render_block(&cfg.root, gen)?;
         if committed != fresh {
-            return Err(format!(
-                "`{}` in {} is STALE; run `plumb capture` to regenerate it.\n\
-                 --- committed ---\n{committed}\n--- fresh ---\n{fresh}",
-                gen.id, gen.surface
+            return Err(Diagnostic::new(
+                codes::BLOCK_STALE,
+                format!(
+                    "`{}` in {} is STALE; run `plumb capture` to regenerate it.\n\
+                     --- committed ---\n{committed}\n--- fresh ---\n{fresh}",
+                    gen.id, gen.surface
+                ),
             ));
         }
         checked += 1;

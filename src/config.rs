@@ -4,6 +4,7 @@
 //! block from a throwaway sample tree. plumbline itself stays generic; the
 //! config is the only place a project's own facts live.
 
+use crate::diagnostic::{codes, Diagnostic};
 use serde_json::Value;
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -65,11 +66,19 @@ impl Config {
     /// Load and validate a config file, resolving its relative paths against
     /// `root` (the directory `plumb` runs in). Returns a human-readable error on
     /// any missing or mistyped field, so a bad config fails loud, not silently.
-    pub fn load(path: &Path, root: PathBuf) -> Result<Config, String> {
-        let text = std::fs::read_to_string(path)
-            .map_err(|e| format!("cannot read config `{}`: {e}", path.display()))?;
-        let doc: Value = serde_json::from_str(&text)
-            .map_err(|e| format!("config `{}` is not valid JSON: {e}", path.display()))?;
+    pub fn load(path: &Path, root: PathBuf) -> Result<Config, Diagnostic> {
+        let text = std::fs::read_to_string(path).map_err(|e| {
+            Diagnostic::new(
+                codes::CONFIG_UNREADABLE,
+                format!("cannot read config `{}`: {e}", path.display()),
+            )
+        })?;
+        let doc: Value = serde_json::from_str(&text).map_err(|e| {
+            Diagnostic::new(
+                codes::CONFIG_INVALID_JSON,
+                format!("config `{}` is not valid JSON: {e}", path.display()),
+            )
+        })?;
 
         // A `capture` block is optional. When present it must be complete
         // (build + command); a declared-but-empty block is an error, not "no
@@ -99,14 +108,18 @@ impl Config {
         // Claims are checked against the fixture, so claims need a fixture.
         // Generated blocks render from the binary, so blocks need a capture.
         if !claims.is_empty() && fixture.is_none() {
-            return Err("`claims` are declared but `fixture` is missing; \
-                        claims are checked against the fixture"
-                .into());
+            return Err(Diagnostic::new(
+                codes::CONFIG_INCOHERENT,
+                "`claims` are declared but `fixture` is missing; \
+                 claims are checked against the fixture",
+            ));
         }
         if !generated.is_empty() && capture.is_none() {
-            return Err("`generated` blocks are declared but `capture` is missing; \
-                        blocks render from the built binary"
-                .into());
+            return Err(Diagnostic::new(
+                codes::CONFIG_INCOHERENT,
+                "`generated` blocks are declared but `capture` is missing; \
+                 blocks render from the built binary",
+            ));
         }
 
         let package_allowlist = doc["package_allowlist"]
@@ -127,15 +140,18 @@ impl Config {
     }
 }
 
-fn parse_generated(g: &Value, i: usize) -> Result<Generated, String> {
+fn parse_generated(g: &Value, i: usize) -> Result<Generated, Diagnostic> {
     let where_ = format!("generated[{i}]");
     let tree = &g["tree"];
     let mut files = BTreeMap::new();
     if let Some(map) = tree["files"].as_object() {
         for (name, content) in map {
-            let c = content
-                .as_str()
-                .ok_or_else(|| format!("{where_}.tree.files[{name}] must be a string"))?;
+            let c = content.as_str().ok_or_else(|| {
+                Diagnostic::new(
+                    codes::CONFIG_SCHEMA,
+                    format!("{where_}.tree.files[{name}] must be a string"),
+                )
+            })?;
             files.insert(name.clone(), c.to_string());
         }
     }
@@ -152,21 +168,29 @@ fn parse_generated(g: &Value, i: usize) -> Result<Generated, String> {
     })
 }
 
-fn req_str(v: &Value, field: &str) -> Result<String, String> {
+fn req_str(v: &Value, field: &str) -> Result<String, Diagnostic> {
     v.as_str()
         .map(str::to_string)
-        .ok_or_else(|| format!("`{field}` must be a string"))
+        .ok_or_else(|| Diagnostic::new(codes::CONFIG_SCHEMA, format!("`{field}` must be a string")))
 }
 
-fn str_vec(v: &Value, field: &str) -> Result<Vec<String>, String> {
-    let arr = v
-        .as_array()
-        .ok_or_else(|| format!("`{field}` must be an array of strings"))?;
+fn str_vec(v: &Value, field: &str) -> Result<Vec<String>, Diagnostic> {
+    let arr = v.as_array().ok_or_else(|| {
+        Diagnostic::new(
+            codes::CONFIG_SCHEMA,
+            format!("`{field}` must be an array of strings"),
+        )
+    })?;
     let mut out = Vec::with_capacity(arr.len());
     for item in arr {
         out.push(
             item.as_str()
-                .ok_or_else(|| format!("`{field}` has a non-string element"))?
+                .ok_or_else(|| {
+                    Diagnostic::new(
+                        codes::CONFIG_SCHEMA,
+                        format!("`{field}` has a non-string element"),
+                    )
+                })?
                 .to_string(),
         );
     }
@@ -184,19 +208,27 @@ fn opt_str_vec(v: &Value) -> Vec<String> {
         .unwrap_or_default()
 }
 
-fn str_map(v: &Value, field: &str) -> Result<BTreeMap<String, String>, String> {
+fn str_map(v: &Value, field: &str) -> Result<BTreeMap<String, String>, Diagnostic> {
     if v.is_null() {
         return Ok(BTreeMap::new());
     }
-    let obj = v
-        .as_object()
-        .ok_or_else(|| format!("`{field}` must be an object of string values"))?;
+    let obj = v.as_object().ok_or_else(|| {
+        Diagnostic::new(
+            codes::CONFIG_SCHEMA,
+            format!("`{field}` must be an object of string values"),
+        )
+    })?;
     let mut out = BTreeMap::new();
     for (k, val) in obj {
         out.insert(
             k.clone(),
             val.as_str()
-                .ok_or_else(|| format!("`{field}[{k}]` must be a string"))?
+                .ok_or_else(|| {
+                    Diagnostic::new(
+                        codes::CONFIG_SCHEMA,
+                        format!("`{field}[{k}]` must be a string"),
+                    )
+                })?
                 .to_string(),
         );
     }

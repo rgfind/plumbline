@@ -22,11 +22,13 @@
 
 mod commands;
 mod config;
+mod diagnostic;
 mod engine;
 mod markers;
 mod registry;
 
 use config::Config;
+use diagnostic::{codes, Diagnostic};
 use std::path::PathBuf;
 use std::process::ExitCode;
 
@@ -42,10 +44,7 @@ fn main() -> ExitCode {
         if a == "--config" {
             match it.next() {
                 Some(p) => config_path = PathBuf::from(p),
-                None => {
-                    eprintln!("plumb: --config needs a path");
-                    return ExitCode::from(2);
-                }
+                None => return fail(Diagnostic::new(codes::USAGE, "--config needs a path")),
             }
         } else {
             rest.push(a.clone());
@@ -54,23 +53,24 @@ fn main() -> ExitCode {
 
     let cmd = rest.first().map(String::as_str).unwrap_or("");
     if !matches!(cmd, "check" | "capture" | "preflight") {
-        eprintln!("usage: plumb [--config <path>] <check | capture [--check] | preflight>");
-        return ExitCode::from(2);
+        return fail(Diagnostic::new(
+            codes::USAGE,
+            "usage: plumb [--config <path>] <check | capture [--check] | preflight>",
+        ));
     }
 
     let root = match std::env::current_dir() {
         Ok(d) => d,
         Err(e) => {
-            eprintln!("plumb: cannot determine working directory: {e}");
-            return ExitCode::FAILURE;
+            return fail(Diagnostic::new(
+                codes::WORKDIR_UNREADABLE,
+                format!("cannot determine working directory: {e}"),
+            ))
         }
     };
     let cfg = match Config::load(&config_path, root) {
         Ok(c) => c,
-        Err(e) => {
-            eprintln!("plumb: {e}");
-            return ExitCode::FAILURE;
-        }
+        Err(d) => return fail(d),
     };
 
     let result = match cmd {
@@ -84,9 +84,13 @@ fn main() -> ExitCode {
 
     match result {
         Ok(()) => ExitCode::SUCCESS,
-        Err(e) => {
-            eprintln!("plumb {cmd}: {e}");
-            ExitCode::FAILURE
-        }
+        Err(d) => fail(d),
     }
+}
+
+/// Print a diagnostic as `plumb: [CODE] message` and return its family's exit
+/// code. The `[CODE]` prefix is what makes the contract's codes observable.
+fn fail(d: Diagnostic) -> ExitCode {
+    eprintln!("plumb: {d}");
+    ExitCode::from(d.exit())
 }

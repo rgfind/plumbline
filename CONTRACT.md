@@ -3,10 +3,12 @@
 This is the reference for `plumb capabilities --json`: the machine-readable
 description of plumbline's own command surface, exit codes, and diagnostics.
 
-**Status: specification, not yet implemented.** Today `plumb` prints prose to
-stderr. This document is the target the implementation aims at. A code in this
-catalog is a promise, and the promise is real only when the running tool emits
-the code. See "Building this" at the end.
+**Status: partly implemented.** Step 1 of "Building this" is done: every `Err`
+path carries a `Diagnostic` with a catalog code, and `plumb` prints it as
+`[CODE] message` on stderr. The `capabilities --json` verb (step 2) and the
+self-contract (step 3) are not built yet, so the JSON envelope below is still a
+target, not live output. A code in this catalog is a promise, and the promise is
+real only when the running tool emits the code. See "Building this" at the end.
 
 `contract_version` is `1`.
 
@@ -119,6 +121,8 @@ its `exit` are the promise.
 | `ALLOWLIST_UNKNOWN` | CONFIG | 1 | the `package_allowlist` value is not recognized |
 | `WORKDIR_UNREADABLE` | ENV | 1 | the working directory could not be determined |
 | `FIXTURE_UNREADABLE` | ENV | 1 | the committed fixture could not be read or parsed |
+| `SURFACE_UNREADABLE` | ENV | 1 | a doc surface could not be read |
+| `WRITE_FAILED` | ENV | 1 | the fixture or a doc surface could not be written |
 | `GIT_UNAVAILABLE` | ENV | 1 | `git status` could not run |
 | `PACKAGE_LIST_FAILED` | ENV | 1 | `cargo package --list` failed (for example a dirty tree without `--allow-dirty`) |
 | `NO_CONTRACT` | CAPTURE | 1 | `capture` was invoked on a crate that declares no capture or fixture |
@@ -188,8 +192,12 @@ plumbline's own self-claim, and `plumb capture` re-reconciles it.
 
 The catalog is complete so the implementation is mechanical:
 
-1. A `Diagnostic { code, family, message }` type carried through every `Err`
-   path, so the running tool emits the code (for example `[STRAY_BLOCK] ...`).
+1. **Done.** A `Diagnostic { code, message }` type, where `code` is a `Code {
+   name, family }` from the catalog, carried through every `Err` path. The
+   running tool emits it as `[STRAY_BLOCK] ...` on stderr. Threading it surfaced
+   two codes the read/gate enumeration had missed — `SURFACE_UNREADABLE` and
+   `WRITE_FAILED` (both ENV) — added without a `contract_version` bump, as the
+   stability policy allows.
 2. The `capabilities` verb emitting the envelope above.
 3. plumbline.json flipped from contract-less back to a full self-contract with
    the self-claims above.
