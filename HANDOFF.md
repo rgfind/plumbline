@@ -109,6 +109,20 @@ verb. crates.io is write-once, so the bar is high. Docs-in-lockstep rule stands.
 2. Give plumb a crates.io-cold README and a `--version`, then Phase 4 (publish
    plumb itself) — only after 1.
 
+## Learnings (external facts, 2026-09-13)
+
+- **crates.io API needs a User-Agent.** `GET
+  https://crates.io/api/v1/crates/<name>` returns 403 with no UA, 200 with one.
+  Send `-H "User-Agent: ..."` or you will misread "does this crate exist."
+- **rf publishing:** rf is on crates.io at 0.0.5 (5 versions, 75 downloads,
+  repo rgfind/rf). But git tags stop at v0.0.2 — tagging lapsed while releases
+  went to 0.0.5. So the new tag-triggered rf CI gate only helps if tagging
+  resumes; an untagged `cargo publish` bypasses it.
+- **Confirm the installed tool version before trusting a local guard run.** The
+  installed `plumb` was silently 7 commits stale (the original standup binary).
+  `plumb <bad-verb>` prints the usage line, which lists the verbs the installed
+  build actually has — a fast staleness check.
+
 ## Watch-outs for the next session
 
 - cwd resets to `~/p/rf/rf` between shell calls in this environment. `cd
