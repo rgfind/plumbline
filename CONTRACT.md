@@ -3,14 +3,14 @@
 This is the reference for `plumb capabilities --json`: the machine-readable
 description of plumbline's own command surface, exit codes, and diagnostics.
 
-**Status: partly implemented.** Steps 1 and 2 of "Building this" are done. Every
+**Status: implemented.** All three steps of "Building this" are done. Every
 `Err` path carries a `Diagnostic` with a catalog code, printed as `[CODE]
-message` on stderr; and `plumb capabilities` emits the envelope below as live
-JSON, with `error_codes` built straight from the same code catalog. The
-self-contract (step 3) — pinning these facts with self-claims and gating plumb's
-own publish on them — is not wired yet. A code in this catalog is a promise, and
-the promise is real only when the running tool emits the code. See "Building
-this" at the end.
+message` on stderr; `plumb capabilities` emits the envelope below as live JSON,
+with `error_codes` built straight from the same code catalog; and
+`plumbline.json` now declares a full self-contract, so `plumb preflight` gates
+plumbline's own publish on the self-claims below. A code in this catalog is a
+promise, and the promise is real only when the running tool emits the code. See
+"Building this" at the end.
 
 `contract_version` is `1`.
 
@@ -207,5 +207,10 @@ The catalog is complete so the implementation is mechanical:
    the binary can raise — the doc cannot claim a code the tool lacks, nor omit
    one it has. `meta` carries a volatile `request_id` and `elapsed_ms`; both are
    normalized away before any two captures are compared.
-3. plumbline.json flipped from contract-less back to a full self-contract with
-   the self-claims above.
+3. **Done.** `plumbline.json` flipped from contract-less back to a full
+   self-contract: `capture` runs `plumb capabilities`, `fixture` is a committed
+   snapshot at `tests/fixtures/contract/capabilities.pl.json` (not packaged),
+   `normalize_meta` drops the volatile `request_id` and `elapsed_ms`, and the
+   six self-claims above are registered. `plumb preflight` now runs the
+   `fixture-fresh` gate against a live capture, so plumbline guards itself on the
+   same terms it enforces on any other crate.

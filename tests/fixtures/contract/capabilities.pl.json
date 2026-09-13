@@ -1,0 +1,227 @@
+{
+  "commands": [
+    "check",
+    "capture",
+    "preflight",
+    "capabilities"
+  ],
+  "data": [
+    {
+      "contract_version": "1",
+      "error_codes": {
+        "ALLOWLIST_UNKNOWN": {
+          "exit": 1,
+          "family": "CONFIG",
+          "meaning": "the package_allowlist value is not recognized"
+        },
+        "BLOCK_STALE": {
+          "exit": 1,
+          "family": "GATE",
+          "meaning": "a generated block differs from a fresh render"
+        },
+        "BUILD_FAILED": {
+          "exit": 1,
+          "family": "CAPTURE",
+          "meaning": "the build command exited non-zero"
+        },
+        "CAPTURE_NOT_JSON": {
+          "exit": 1,
+          "family": "CAPTURE",
+          "meaning": "captured stdout was not valid JSON"
+        },
+        "CAPTURE_RUN_FAILED": {
+          "exit": 1,
+          "family": "CAPTURE",
+          "meaning": "the capture command was empty or exited non-zero"
+        },
+        "CLAIM_DRIFT": {
+          "exit": 1,
+          "family": "GATE",
+          "meaning": "a registered claim no longer equals its fixture field"
+        },
+        "CONFIG_INCOHERENT": {
+          "exit": 1,
+          "family": "CONFIG",
+          "meaning": "claims declared without a fixture, or generated blocks without a capture"
+        },
+        "CONFIG_INVALID_JSON": {
+          "exit": 1,
+          "family": "CONFIG",
+          "meaning": "the config file is not valid JSON"
+        },
+        "CONFIG_SCHEMA": {
+          "exit": 1,
+          "family": "CONFIG",
+          "meaning": "a field is missing or mistyped inside a declared block"
+        },
+        "CONFIG_UNREADABLE": {
+          "exit": 1,
+          "family": "CONFIG",
+          "meaning": "the config file could not be read"
+        },
+        "FIXTURE_STALE": {
+          "exit": 1,
+          "family": "GATE",
+          "meaning": "a fresh capture differs from the committed fixture"
+        },
+        "FIXTURE_UNREADABLE": {
+          "exit": 1,
+          "family": "ENV",
+          "meaning": "the committed fixture could not be read or parsed"
+        },
+        "GIT_UNAVAILABLE": {
+          "exit": 1,
+          "family": "ENV",
+          "meaning": "git status could not run"
+        },
+        "MARKER_MISSING": {
+          "exit": 1,
+          "family": "CAPTURE",
+          "meaning": "a block's BEGIN or END marker was not found on its surface"
+        },
+        "NO_CONTRACT": {
+          "exit": 1,
+          "family": "CAPTURE",
+          "meaning": "capture was invoked on a crate that declares no capture or fixture"
+        },
+        "PACKAGED_LEAK": {
+          "exit": 1,
+          "family": "GATE",
+          "meaning": "a packaged file falls outside the include allowlist"
+        },
+        "PACKAGE_LIST_FAILED": {
+          "exit": 1,
+          "family": "ENV",
+          "meaning": "cargo package --list failed (for example a dirty tree without --allow-dirty)"
+        },
+        "PREFLIGHT_FAILED": {
+          "exit": 1,
+          "family": "GATE",
+          "meaning": "one or more gates failed (the aggregate; the gate codes are the ground truth)"
+        },
+        "RENDER_FAILED": {
+          "exit": 1,
+          "family": "CAPTURE",
+          "meaning": "a render command was empty, exited non-zero, or emitted non-UTF-8"
+        },
+        "STRAY_BLOCK": {
+          "exit": 1,
+          "family": "GATE",
+          "meaning": "a surface carries a GENERATED block with no declared renderer"
+        },
+        "SURFACE_UNREADABLE": {
+          "exit": 1,
+          "family": "ENV",
+          "meaning": "a doc surface could not be read"
+        },
+        "USAGE": {
+          "exit": 2,
+          "family": "USAGE",
+          "meaning": "unknown verb, or --config given without a path value"
+        },
+        "WORKDIR_UNREADABLE": {
+          "exit": 1,
+          "family": "ENV",
+          "meaning": "the working directory could not be determined"
+        },
+        "WORKTREE_DIRTY": {
+          "exit": 1,
+          "family": "GATE",
+          "meaning": "uncommitted paths in the tree to be packaged"
+        },
+        "WRITE_FAILED": {
+          "exit": 1,
+          "family": "ENV",
+          "meaning": "the fixture or a doc surface could not be written"
+        }
+      },
+      "exit_codes": {
+        "0": {
+          "meaning": "success; every gate and claim held",
+          "retryable": false
+        },
+        "1": {
+          "meaning": "a gate, claim, capture, or config step failed",
+          "retryable": false
+        },
+        "2": {
+          "meaning": "usage error (unknown verb, or --config without a path)",
+          "retryable": false
+        }
+      },
+      "gates": [
+        {
+          "applies_when": "always",
+          "id": "worktree-clean"
+        },
+        {
+          "applies_when": "a capture and fixture are declared",
+          "id": "fixture-fresh"
+        },
+        {
+          "applies_when": "always",
+          "id": "docs-stray-block"
+        },
+        {
+          "applies_when": "always",
+          "id": "packaged-allowlist"
+        },
+        {
+          "applies_when": "generated blocks are declared",
+          "id": "generated-fresh"
+        }
+      ],
+      "global_flags": [
+        {
+          "arg": "path",
+          "name": "--config",
+          "summary": "path to the project config (default ./plumbline.json)"
+        }
+      ],
+      "tool_version": "0.0.1",
+      "value_domains": {
+        "claim_mode": [
+          "value",
+          "keys",
+          "set"
+        ],
+        "package_allowlist": [
+          "cargo-include"
+        ]
+      },
+      "verbs": {
+        "capabilities": {
+          "flags": [],
+          "needs_contract": false,
+          "summary": "emit this contract as JSON"
+        },
+        "capture": {
+          "flags": [
+            "--check"
+          ],
+          "needs_contract": true,
+          "summary": "rewrite the fixture from a fresh run; re-render blocks"
+        },
+        "check": {
+          "flags": [],
+          "needs_contract": false,
+          "summary": "claims equal the fixture; no stray blocks"
+        },
+        "preflight": {
+          "flags": [],
+          "needs_contract": false,
+          "summary": "the publish stop-sign; run every applicable gate"
+        }
+      },
+      "warning_codes": []
+    }
+  ],
+  "errors": [],
+  "meta": {
+    "elapsed_ms": 0,
+    "request_id": "bb33-18d4cdb8e99e9be0"
+  },
+  "ok": true,
+  "tool_version": "0.0.1",
+  "warnings": []
+}

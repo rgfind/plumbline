@@ -1,4 +1,74 @@
 {
+  "capture": {
+    "build": ["cargo", "build"],
+    "command": ["plumb", "capabilities"]
+  },
+  "fixture": "tests/fixtures/contract/capabilities.pl.json",
+  "normalize_meta": ["request_id", "elapsed_ms"],
   "surfaces": ["README.md"],
-  "package_allowlist": "cargo-include"
+  "package_allowlist": "cargo-include",
+  "claims": [
+    {
+      "id": "contract_version",
+      "mode": "value",
+      "fixture_path": "data.0.contract_version",
+      "expected": "1"
+    },
+    {
+      "id": "verb_set",
+      "mode": "keys",
+      "fixture_path": "data.0.verbs",
+      "expected": ["check", "capture", "preflight", "capabilities"]
+    },
+    {
+      "id": "exit_code_set",
+      "mode": "keys",
+      "fixture_path": "data.0.exit_codes",
+      "expected": ["0", "1", "2"]
+    },
+    {
+      "id": "error_code_set",
+      "mode": "keys",
+      "fixture_path": "data.0.error_codes",
+      "expected": [
+        "USAGE",
+        "CONFIG_UNREADABLE",
+        "CONFIG_INVALID_JSON",
+        "CONFIG_SCHEMA",
+        "CONFIG_INCOHERENT",
+        "ALLOWLIST_UNKNOWN",
+        "WORKDIR_UNREADABLE",
+        "FIXTURE_UNREADABLE",
+        "SURFACE_UNREADABLE",
+        "WRITE_FAILED",
+        "GIT_UNAVAILABLE",
+        "PACKAGE_LIST_FAILED",
+        "NO_CONTRACT",
+        "BUILD_FAILED",
+        "CAPTURE_RUN_FAILED",
+        "CAPTURE_NOT_JSON",
+        "RENDER_FAILED",
+        "MARKER_MISSING",
+        "WORKTREE_DIRTY",
+        "FIXTURE_STALE",
+        "CLAIM_DRIFT",
+        "STRAY_BLOCK",
+        "PACKAGED_LEAK",
+        "BLOCK_STALE",
+        "PREFLIGHT_FAILED"
+      ]
+    },
+    {
+      "id": "stray_block_exit",
+      "mode": "value",
+      "fixture_path": "data.0.error_codes.STRAY_BLOCK.exit",
+      "expected": 1
+    },
+    {
+      "id": "stray_block_family",
+      "mode": "value",
+      "fixture_path": "data.0.error_codes.STRAY_BLOCK.family",
+      "expected": "GATE"
+    }
+  ]
 }
