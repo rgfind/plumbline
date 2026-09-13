@@ -153,7 +153,12 @@ fn str_vec(v: &Value, field: &str) -> Result<Vec<String>, String> {
 
 fn opt_str_vec(v: &Value) -> Vec<String> {
     v.as_array()
-        .map(|a| a.iter().filter_map(Value::as_str).map(str::to_string).collect())
+        .map(|a| {
+            a.iter()
+                .filter_map(Value::as_str)
+                .map(str::to_string)
+                .collect()
+        })
         .unwrap_or_default()
 }
 

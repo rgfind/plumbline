@@ -1,0 +1,25 @@
+name: CI
+
+# plumbline guards other crates, so it must be well-guarded itself: formatting,
+# lints, and the full test suite (unit tests plus the seeded-drift acceptance
+# tests) on every push and pull request.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - name: Formatting
+        run: cargo fmt --check
+      - name: Lints
+        run: cargo clippy --all-targets --locked -- -D warnings
+      - name: Tests
+        run: cargo test --locked

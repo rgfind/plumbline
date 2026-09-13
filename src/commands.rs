@@ -19,7 +19,8 @@ use std::path::Path;
 use std::process::Command;
 
 fn read_json(path: &Path) -> Result<Value, String> {
-    let text = std::fs::read_to_string(path).map_err(|e| format!("read {}: {e}", path.display()))?;
+    let text =
+        std::fs::read_to_string(path).map_err(|e| format!("read {}: {e}", path.display()))?;
     serde_json::from_str(&text).map_err(|e| format!("parse {}: {e}", path.display()))
 }
 
@@ -70,13 +71,16 @@ fn check_docs_against_fixture(cfg: &Config) -> Result<usize, String> {
 pub fn cmd_capture(cfg: &Config, check_only: bool) -> Result<(), String> {
     if check_only {
         fixture_matches_binary(cfg)?;
-        println!("plumbline: committed fixture is current (contract-equivalent to a fresh capture)");
+        println!(
+            "plumbline: committed fixture is current (contract-equivalent to a fresh capture)"
+        );
         return Ok(());
     }
 
     let fixture_path = cfg.root.join(&cfg.fixture);
     let captured = engine::capture(&cfg.root, cfg)?;
-    let mut text = serde_json::to_string_pretty(&captured).map_err(|e| format!("serialize: {e}"))?;
+    let mut text =
+        serde_json::to_string_pretty(&captured).map_err(|e| format!("serialize: {e}"))?;
     text.push('\n');
     std::fs::write(&fixture_path, text).map_err(|e| format!("write {}: {e}", cfg.fixture))?;
     println!("plumbline: rewrote {} from a fresh capture", cfg.fixture);
@@ -136,11 +140,17 @@ pub fn cmd_preflight(cfg: &Config) -> Result<(), String> {
         ),
         (
             "committed fixture matches the binary",
-            Box::new(|| fixture_matches_binary(cfg).map(|()| "a fresh capture equals the committed fixture".into())),
+            Box::new(|| {
+                fixture_matches_binary(cfg)
+                    .map(|()| "a fresh capture equals the committed fixture".into())
+            }),
         ),
         (
             "docs match the fixture (no stray blocks)",
-            Box::new(|| check_docs_against_fixture(cfg).map(|n| format!("{n} claim(s) match; no stray GENERATED block"))),
+            Box::new(|| {
+                check_docs_against_fixture(cfg)
+                    .map(|n| format!("{n} claim(s) match; no stray GENERATED block"))
+            }),
         ),
         (
             "packaged files within the include allowlist",

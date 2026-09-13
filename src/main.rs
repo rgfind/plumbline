@@ -75,7 +75,9 @@ fn main() -> ExitCode {
 
     let result = match cmd {
         "check" => commands::cmd_check(&cfg),
-        "capture" => commands::cmd_capture(&cfg, rest.get(1).map(String::as_str) == Some("--check")),
+        "capture" => {
+            commands::cmd_capture(&cfg, rest.get(1).map(String::as_str) == Some("--check"))
+        }
         "preflight" => commands::cmd_preflight(&cfg),
         _ => unreachable!("verb already validated"),
     };

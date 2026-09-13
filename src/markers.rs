@@ -42,7 +42,11 @@ pub fn replace_generated(text: &str, id: &str, body: &str) -> Result<String, Str
         .find(&end)
         .ok_or_else(|| format!("END marker for `{id}` not found"))?
         + after_begin;
-    Ok(format!("{}\n{body}\n{}", &text[..after_begin], &text[estart..]))
+    Ok(format!(
+        "{}\n{body}\n{}",
+        &text[..after_begin],
+        &text[estart..]
+    ))
 }
 
 /// Every GENERATED-block id present in `text`, in order of appearance.
@@ -70,7 +74,10 @@ mod tests {
 
     #[test]
     fn extract_returns_body_without_marker_lines() {
-        assert_eq!(extract_generated(SAMPLE, "readme-example"), Some("old body\nline2"));
+        assert_eq!(
+            extract_generated(SAMPLE, "readme-example"),
+            Some("old body\nline2")
+        );
     }
 
     #[test]

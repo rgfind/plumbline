@@ -17,10 +17,12 @@ fn bin_path(root: &Path, name: &str) -> PathBuf {
 
 /// Run a build command (e.g. ["cargo","build","--bin","rf"]) in the crate root.
 pub fn run_build(root: &Path, build: &[String]) -> Result<(), String> {
-    let (prog, args) = build
-        .split_first()
-        .ok_or("capture.build is empty")?;
-    let prog = if prog == "cargo" { cargo() } else { prog.clone() };
+    let (prog, args) = build.split_first().ok_or("capture.build is empty")?;
+    let prog = if prog == "cargo" {
+        cargo()
+    } else {
+        prog.clone()
+    };
     let status = Command::new(&prog)
         .args(args)
         .current_dir(root)
@@ -291,10 +293,17 @@ mod tests {
 
     #[test]
     fn allowlist_admits_sources_docs_and_cargo_meta() {
-        let globs: Vec<String> = ["src/**/*.rs", "README.md", "CHANGELOG.md", "LICENSE", "Cargo.toml", "Cargo.lock"]
-            .iter()
-            .map(|s| s.to_string())
-            .collect();
+        let globs: Vec<String> = [
+            "src/**/*.rs",
+            "README.md",
+            "CHANGELOG.md",
+            "LICENSE",
+            "Cargo.toml",
+            "Cargo.lock",
+        ]
+        .iter()
+        .map(|s| s.to_string())
+        .collect();
         for ok in [
             "Cargo.toml",
             "Cargo.toml.orig",

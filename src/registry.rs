@@ -97,7 +97,11 @@ fn array_strings_sorted(v: &Value) -> Result<Vec<String>, String> {
     let arr = v.as_array().ok_or("resolved value is not an array")?;
     let mut out = Vec::with_capacity(arr.len());
     for item in arr {
-        out.push(item.as_str().ok_or("array element is not a string")?.to_string());
+        out.push(
+            item.as_str()
+                .ok_or("array element is not a string")?
+                .to_string(),
+        );
     }
     out.sort();
     Ok(out)
@@ -147,23 +151,33 @@ mod tests {
 
     #[test]
     fn value_mode_passes_and_drifts() {
-        let pass = vec![json!({"id":"s","fixture_path":"verbs.find.stage","mode":"value","expected":"enum[found,fd_name]"})];
+        let pass = vec![
+            json!({"id":"s","fixture_path":"verbs.find.stage","mode":"value","expected":"enum[found,fd_name]"}),
+        ];
         assert!(check_claims(&fixture(), &pass).is_empty());
-        let drift = vec![json!({"id":"s","fixture_path":"verbs.find.stage","mode":"value","expected":"enum[found]"})];
+        let drift = vec![
+            json!({"id":"s","fixture_path":"verbs.find.stage","mode":"value","expected":"enum[found]"}),
+        ];
         assert_eq!(check_claims(&fixture(), &drift).len(), 1);
     }
 
     #[test]
     fn keys_and_set_modes_are_order_independent() {
-        let keys = vec![json!({"id":"e","fixture_path":"exit_codes","mode":"keys","expected":["5","1","0"]})];
+        let keys = vec![
+            json!({"id":"e","fixture_path":"exit_codes","mode":"keys","expected":["5","1","0"]}),
+        ];
         assert!(check_claims(&fixture(), &keys).is_empty());
-        let set = vec![json!({"id":"w","fixture_path":"warning_codes","mode":"set","expected":["C","A","B"]})];
+        let set = vec![
+            json!({"id":"w","fixture_path":"warning_codes","mode":"set","expected":["C","A","B"]}),
+        ];
         assert!(check_claims(&fixture(), &set).is_empty());
     }
 
     #[test]
     fn unresolvable_path_is_a_failure() {
-        let bad = vec![json!({"id":"x","fixture_path":"verbs.missing.stage","mode":"value","expected":1})];
+        let bad = vec![
+            json!({"id":"x","fixture_path":"verbs.missing.stage","mode":"value","expected":1}),
+        ];
         assert_eq!(check_claims(&fixture(), &bad).len(), 1);
     }
 
