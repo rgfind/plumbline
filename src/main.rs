@@ -14,6 +14,9 @@
 //!   plumb preflight            the publish stop-sign: run every gate that must
 //!                              hold at `cargo publish` and exit non-zero unless
 //!                              all pass.
+//!   plumb capabilities         emit plumb's own contract (verbs, exit codes,
+//!                              gates, and the full error-code catalog) as JSON
+//!                              on stdout. Needs no config; runs anywhere.
 //!
 //! A project describes itself in one JSON config (default `plumbline.json` in the
 //! working directory, or `--config <path>`). The working directory is the crate
@@ -52,11 +55,21 @@ fn main() -> ExitCode {
     }
 
     let cmd = rest.first().map(String::as_str).unwrap_or("");
-    if !matches!(cmd, "check" | "capture" | "preflight") {
+    if !matches!(cmd, "check" | "capture" | "preflight" | "capabilities") {
         return fail(Diagnostic::new(
             codes::USAGE,
-            "usage: plumb [--config <path>] <check | capture [--check] | preflight>",
+            "usage: plumb [--config <path>] \
+             <check | capture [--check] | preflight | capabilities>",
         ));
+    }
+
+    // `capabilities` describes the tool, not a project, so it needs no config
+    // and must run in any directory. Dispatch it before touching the config.
+    if cmd == "capabilities" {
+        return match commands::cmd_capabilities() {
+            Ok(()) => ExitCode::SUCCESS,
+            Err(d) => fail(d),
+        };
     }
 
     let root = match std::env::current_dir() {

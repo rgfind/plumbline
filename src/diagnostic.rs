@@ -23,10 +23,8 @@ pub enum Family {
 }
 
 impl Family {
-    /// The family's contract string (`"GATE"`, `"CONFIG"`, ...). Emitted by the
-    /// `capabilities` envelope, which is the next step in CONTRACT.md's "Building
-    /// this"; unused until then.
-    #[allow(dead_code)]
+    /// The family's contract string (`"GATE"`, `"CONFIG"`, ...), emitted by the
+    /// `capabilities` envelope.
     pub fn as_str(self) -> &'static str {
         match self {
             Family::Usage => "USAGE",
@@ -47,11 +45,15 @@ impl Family {
     }
 }
 
-/// A catalog entry: a code name bound to its family. Values live in `codes`.
+/// A catalog entry: a code name bound to its family and its prose meaning.
+/// Values live in `codes`. The `name`, `family`, and resulting exit are the
+/// promise; `meaning` is prose the `capabilities` envelope emits and may be
+/// reworded freely.
 #[derive(Clone, Copy, Debug)]
 pub struct Code {
     pub name: &'static str,
     pub family: Family,
+    pub meaning: &'static str,
 }
 
 /// A failure that knows its own code. `message` is human prose and may be
@@ -83,49 +85,60 @@ impl fmt::Display for Diagnostic {
     }
 }
 
-/// The code catalog. Each entry pairs a name with its family, once, so the two
-/// can never drift apart. `stringify!` keeps the string equal to the constant.
+/// The code catalog. Each entry pairs a name with its family and meaning, once,
+/// so the three can never drift apart. `stringify!` keeps the string equal to
+/// the constant. The same macro builds `ALL`, so `capabilities` enumerates
+/// exactly the codes that exist — a new code cannot be forgotten in the
+/// envelope, because adding the const is what adds it to `ALL`.
 pub mod codes {
     use super::{Code, Family};
 
-    macro_rules! code {
-        ($id:ident, $family:ident) => {
-            pub const $id: Code = Code {
-                name: stringify!($id),
-                family: Family::$family,
-            };
+    macro_rules! catalog {
+        ($($id:ident : $family:ident = $meaning:literal),* $(,)?) => {
+            $(
+                pub const $id: Code = Code {
+                    name: stringify!($id),
+                    family: Family::$family,
+                    meaning: $meaning,
+                };
+            )*
+            /// Every code, in catalog order. The single source `capabilities`
+            /// iterates to emit `error_codes`.
+            pub const ALL: &[Code] = &[$($id),*];
         };
     }
 
-    code!(USAGE, Usage);
+    catalog! {
+        USAGE: Usage = "unknown verb, or --config given without a path value",
 
-    code!(CONFIG_UNREADABLE, Config);
-    code!(CONFIG_INVALID_JSON, Config);
-    code!(CONFIG_SCHEMA, Config);
-    code!(CONFIG_INCOHERENT, Config);
-    code!(ALLOWLIST_UNKNOWN, Config);
+        CONFIG_UNREADABLE: Config = "the config file could not be read",
+        CONFIG_INVALID_JSON: Config = "the config file is not valid JSON",
+        CONFIG_SCHEMA: Config = "a field is missing or mistyped inside a declared block",
+        CONFIG_INCOHERENT: Config = "claims declared without a fixture, or generated blocks without a capture",
+        ALLOWLIST_UNKNOWN: Config = "the package_allowlist value is not recognized",
 
-    code!(WORKDIR_UNREADABLE, Env);
-    code!(FIXTURE_UNREADABLE, Env);
-    code!(SURFACE_UNREADABLE, Env);
-    code!(WRITE_FAILED, Env);
-    code!(GIT_UNAVAILABLE, Env);
-    code!(PACKAGE_LIST_FAILED, Env);
+        WORKDIR_UNREADABLE: Env = "the working directory could not be determined",
+        FIXTURE_UNREADABLE: Env = "the committed fixture could not be read or parsed",
+        SURFACE_UNREADABLE: Env = "a doc surface could not be read",
+        WRITE_FAILED: Env = "the fixture or a doc surface could not be written",
+        GIT_UNAVAILABLE: Env = "git status could not run",
+        PACKAGE_LIST_FAILED: Env = "cargo package --list failed (for example a dirty tree without --allow-dirty)",
 
-    code!(NO_CONTRACT, Capture);
-    code!(BUILD_FAILED, Capture);
-    code!(CAPTURE_RUN_FAILED, Capture);
-    code!(CAPTURE_NOT_JSON, Capture);
-    code!(RENDER_FAILED, Capture);
-    code!(MARKER_MISSING, Capture);
+        NO_CONTRACT: Capture = "capture was invoked on a crate that declares no capture or fixture",
+        BUILD_FAILED: Capture = "the build command exited non-zero",
+        CAPTURE_RUN_FAILED: Capture = "the capture command was empty or exited non-zero",
+        CAPTURE_NOT_JSON: Capture = "captured stdout was not valid JSON",
+        RENDER_FAILED: Capture = "a render command was empty, exited non-zero, or emitted non-UTF-8",
+        MARKER_MISSING: Capture = "a block's BEGIN or END marker was not found on its surface",
 
-    code!(WORKTREE_DIRTY, Gate);
-    code!(FIXTURE_STALE, Gate);
-    code!(CLAIM_DRIFT, Gate);
-    code!(STRAY_BLOCK, Gate);
-    code!(PACKAGED_LEAK, Gate);
-    code!(BLOCK_STALE, Gate);
-    code!(PREFLIGHT_FAILED, Gate);
+        WORKTREE_DIRTY: Gate = "uncommitted paths in the tree to be packaged",
+        FIXTURE_STALE: Gate = "a fresh capture differs from the committed fixture",
+        CLAIM_DRIFT: Gate = "a registered claim no longer equals its fixture field",
+        STRAY_BLOCK: Gate = "a surface carries a GENERATED block with no declared renderer",
+        PACKAGED_LEAK: Gate = "a packaged file falls outside the include allowlist",
+        BLOCK_STALE: Gate = "a generated block differs from a fresh render",
+        PREFLIGHT_FAILED: Gate = "one or more gates failed (the aggregate; the gate codes are the ground truth)",
+    }
 }
 
 #[cfg(test)]
@@ -151,5 +164,20 @@ mod tests {
         let d = Diagnostic::new(codes::STRAY_BLOCK, "README.md: orphan block");
         assert_eq!(d.to_string(), "[STRAY_BLOCK] README.md: orphan block");
         assert_eq!(d.exit(), 1);
+    }
+
+    #[test]
+    fn all_enumerates_every_code_uniquely_with_a_meaning() {
+        // `capabilities` emits exactly `ALL`, so a duplicate or empty entry
+        // would corrupt the published catalog.
+        assert!(codes::ALL.iter().any(|c| c.name == "STRAY_BLOCK"));
+        assert!(codes::ALL
+            .iter()
+            .all(|c| !c.name.is_empty() && !c.meaning.is_empty()));
+        let mut names: Vec<&str> = codes::ALL.iter().map(|c| c.name).collect();
+        let count = names.len();
+        names.sort_unstable();
+        names.dedup();
+        assert_eq!(names.len(), count, "duplicate code name in the catalog");
     }
 }

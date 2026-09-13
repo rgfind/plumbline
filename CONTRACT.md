@@ -3,12 +3,14 @@
 This is the reference for `plumb capabilities --json`: the machine-readable
 description of plumbline's own command surface, exit codes, and diagnostics.
 
-**Status: partly implemented.** Step 1 of "Building this" is done: every `Err`
-path carries a `Diagnostic` with a catalog code, and `plumb` prints it as
-`[CODE] message` on stderr. The `capabilities --json` verb (step 2) and the
-self-contract (step 3) are not built yet, so the JSON envelope below is still a
-target, not live output. A code in this catalog is a promise, and the promise is
-real only when the running tool emits the code. See "Building this" at the end.
+**Status: partly implemented.** Steps 1 and 2 of "Building this" are done. Every
+`Err` path carries a `Diagnostic` with a catalog code, printed as `[CODE]
+message` on stderr; and `plumb capabilities` emits the envelope below as live
+JSON, with `error_codes` built straight from the same code catalog. The
+self-contract (step 3) — pinning these facts with self-claims and gating plumb's
+own publish on them — is not wired yet. A code in this catalog is a promise, and
+the promise is real only when the running tool emits the code. See "Building
+this" at the end.
 
 `contract_version` is `1`.
 
@@ -29,7 +31,7 @@ unchanged. The wrapper carries meta; the contract lives in `data[0]`.
 {
   "ok": true,
   "tool_version": "0.0.1",
-  "meta": { "request_id": "...", "ts_iso": "...", "elapsed_ms": 0 },
+  "meta": { "request_id": "...", "elapsed_ms": 0 },
   "commands": ["check", "capture", "preflight", "capabilities"],
   "warnings": [],
   "errors": [],
@@ -198,6 +200,12 @@ The catalog is complete so the implementation is mechanical:
    two codes the read/gate enumeration had missed — `SURFACE_UNREADABLE` and
    `WRITE_FAILED` (both ENV) — added without a `contract_version` bump, as the
    stability policy allows.
-2. The `capabilities` verb emitting the envelope above.
+2. **Done.** The `capabilities` verb emits the envelope above on stdout. It
+   needs no config (it describes the tool, not a project), so it runs anywhere;
+   `main` dispatches it before loading a config. `error_codes` is generated from
+   `diagnostic::codes::ALL`, so the published catalog is exactly the set of codes
+   the binary can raise — the doc cannot claim a code the tool lacks, nor omit
+   one it has. `meta` carries a volatile `request_id` and `elapsed_ms`; both are
+   normalized away before any two captures are compared.
 3. plumbline.json flipped from contract-less back to a full self-contract with
    the self-claims above.

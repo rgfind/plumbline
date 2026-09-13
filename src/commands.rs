@@ -15,7 +15,7 @@ use crate::diagnostic::{codes, Diagnostic};
 use crate::engine;
 use crate::markers::{extract_generated, generated_ids, replace_generated};
 use crate::registry::{check_claims, normalized};
-use serde_json::Value;
+use serde_json::{json, Map, Value};
 use std::path::Path;
 use std::process::Command;
 
@@ -335,4 +335,99 @@ fn generated_blocks_fresh(cfg: &Config) -> Result<String, Diagnostic> {
         checked += 1;
     }
     Ok(format!("{checked} block(s) equal a fresh run"))
+}
+
+// ---- capabilities ----------------------------------------------------------
+
+/// Emit plumbline's own contract as JSON on stdout: the same envelope shape
+/// plumbline checks for its targets, now describing `plumb` itself. This is the
+/// data a self-contract pins its claims against. It needs no project config —
+/// it describes the tool, not any one crate — so `main` dispatches it before a
+/// config is loaded, and it runs anywhere.
+///
+/// `error_codes` is built straight from `diagnostic::codes::ALL`, so the emitted
+/// catalog is exactly the set of codes the tool can raise: the doc cannot claim
+/// a code the binary lacks, nor omit one it has.
+pub fn cmd_capabilities() -> Result<(), Diagnostic> {
+    let version = env!("CARGO_PKG_VERSION");
+    let started = std::time::Instant::now();
+
+    let mut error_codes = Map::new();
+    for c in codes::ALL {
+        error_codes.insert(
+            c.name.to_string(),
+            json!({
+                "family": c.family.as_str(),
+                "exit": c.family.exit(),
+                "meaning": c.meaning,
+            }),
+        );
+    }
+
+    let data = json!({
+        "contract_version": "1",
+        "tool_version": version,
+        "exit_codes": {
+            "0": {"meaning": "success; every gate and claim held", "retryable": false},
+            "1": {"meaning": "a gate, claim, capture, or config step failed", "retryable": false},
+            "2": {"meaning": "usage error (unknown verb, or --config without a path)", "retryable": false},
+        },
+        "global_flags": [
+            {"name": "--config", "arg": "path",
+             "summary": "path to the project config (default ./plumbline.json)"}
+        ],
+        "verbs": {
+            "check": {"flags": [], "needs_contract": false,
+                      "summary": "claims equal the fixture; no stray blocks"},
+            "capture": {"flags": ["--check"], "needs_contract": true,
+                        "summary": "rewrite the fixture from a fresh run; re-render blocks"},
+            "preflight": {"flags": [], "needs_contract": false,
+                          "summary": "the publish stop-sign; run every applicable gate"},
+            "capabilities": {"flags": [], "needs_contract": false,
+                             "summary": "emit this contract as JSON"},
+        },
+        "gates": [
+            {"id": "worktree-clean", "applies_when": "always"},
+            {"id": "fixture-fresh", "applies_when": "a capture and fixture are declared"},
+            {"id": "docs-stray-block", "applies_when": "always"},
+            {"id": "packaged-allowlist", "applies_when": "always"},
+            {"id": "generated-fresh", "applies_when": "generated blocks are declared"},
+        ],
+        "value_domains": {
+            "claim_mode": ["value", "keys", "set"],
+            "package_allowlist": ["cargo-include"],
+        },
+        "error_codes": Value::Object(error_codes),
+        "warning_codes": [],
+    });
+
+    let envelope = json!({
+        "ok": true,
+        "tool_version": version,
+        "meta": {
+            "request_id": format!("{:x}-{:x}", std::process::id(), nanos()),
+            "elapsed_ms": started.elapsed().as_millis() as u64,
+        },
+        "commands": ["check", "capture", "preflight", "capabilities"],
+        "warnings": [],
+        "errors": [],
+        "data": [data],
+    });
+
+    let mut text = serde_json::to_string_pretty(&envelope).map_err(|e| {
+        Diagnostic::new(codes::WRITE_FAILED, format!("serialize capabilities: {e}"))
+    })?;
+    text.push('\n');
+    print!("{text}");
+    Ok(())
+}
+
+/// Nanoseconds since the epoch, for the volatile `request_id`. Zero if the clock
+/// is before the epoch (it never is); the value is normalized away in any
+/// comparison, so its only job is to differ run to run.
+fn nanos() -> u128 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_nanos())
+        .unwrap_or(0)
 }
