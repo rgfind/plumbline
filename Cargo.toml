@@ -9,6 +9,17 @@ keywords = ["cargo", "publish", "docs", "release", "contract"]
 categories = ["development-tools::cargo-plugins", "command-line-utilities"]
 readme = "README.md"
 
+# The exhaustive list of what ships to crates.io. plumbline reads this same
+# array to build its own packaged-file allowlist (gate 4), so Cargo.toml is the
+# single source of truth for what leaves the repo. Keep it lean: the binary's
+# sources plus the two docs a consumer sees. (Cargo always adds Cargo.toml,
+# Cargo.lock, and its vcs-info; those need no listing.)
+include = [
+    "src/**/*.rs",
+    "README.md",
+    "LICENSE",
+]
+
 # crate name is `plumbline`; the command is `plumb` (as beads_rust ships `br`).
 [[bin]]
 name = "plumb"

@@ -4,7 +4,7 @@
 //! allowlist. These are the generalized forms of what was hardcoded for `rf`;
 //! the specifics now arrive through `Config`.
 
-use crate::config::{Config, Generated};
+use crate::config::{Capture, Generated};
 use serde_json::Value;
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -37,16 +37,15 @@ pub fn run_build(root: &Path, build: &[String]) -> Result<(), String> {
 
 /// Build, then run the capture command under the configured env, and parse its
 /// stdout as the JSON contract envelope.
-pub fn capture(root: &Path, cfg: &Config) -> Result<Value, String> {
-    run_build(root, &cfg.capture.build)?;
-    let (name, args) = cfg
-        .capture
+pub fn capture(root: &Path, capture: &Capture) -> Result<Value, String> {
+    run_build(root, &capture.build)?;
+    let (name, args) = capture
         .command
         .split_first()
         .ok_or("capture.command is empty")?;
     let out = Command::new(bin_path(root, name))
         .args(args)
-        .envs(&cfg.capture.env)
+        .envs(&capture.env)
         .current_dir(root)
         .output()
         .map_err(|e| format!("run capture command: {e}"))?;

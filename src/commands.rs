@@ -10,7 +10,7 @@
 //!   preflight  the publish stop-sign: run every gate that must hold at
 //!              `cargo publish` and exit non-zero unless all pass.
 
-use crate::config::Config;
+use crate::config::{Capture, Config};
 use crate::engine;
 use crate::markers::{extract_generated, generated_ids, replace_generated};
 use crate::registry::{check_claims, normalized};
@@ -34,9 +34,19 @@ pub fn cmd_check(cfg: &Config) -> Result<(), String> {
 
 /// Assert every registered claim equals its fixture field and no surface carries
 /// a generated block with an unknown id. Returns the number of claims checked.
+///
+/// When the config declares no fixture, there are no claims to check (the loader
+/// forbids claims without a fixture), so this reduces to the stray-block scan.
 fn check_docs_against_fixture(cfg: &Config) -> Result<usize, String> {
-    let fixture = read_json(&cfg.root.join(&cfg.fixture))?;
-    let mut failures = check_claims(&fixture, &cfg.claims);
+    let mut failures = Vec::new();
+    let claim_count = match &cfg.fixture {
+        Some(f) => {
+            let fixture = read_json(&cfg.root.join(f))?;
+            failures.extend(check_claims(&fixture, &cfg.claims));
+            cfg.claims.len()
+        }
+        None => 0,
+    };
 
     let known: Vec<&str> = cfg.generated.iter().map(|g| g.id.as_str()).collect();
     for surface in &cfg.surfaces {
@@ -56,7 +66,7 @@ fn check_docs_against_fixture(cfg: &Config) -> Result<usize, String> {
     }
 
     if failures.is_empty() {
-        Ok(cfg.claims.len())
+        Ok(claim_count)
     } else {
         Err(format!(
             "{} claim(s) failed:\n  {}",
@@ -69,6 +79,8 @@ fn check_docs_against_fixture(cfg: &Config) -> Result<usize, String> {
 // ---- capture ---------------------------------------------------------------
 
 pub fn cmd_capture(cfg: &Config, check_only: bool) -> Result<(), String> {
+    let (capture, fixture) = require_contract(cfg)?;
+
     if check_only {
         fixture_matches_binary(cfg)?;
         println!(
@@ -77,13 +89,13 @@ pub fn cmd_capture(cfg: &Config, check_only: bool) -> Result<(), String> {
         return Ok(());
     }
 
-    let fixture_path = cfg.root.join(&cfg.fixture);
-    let captured = engine::capture(&cfg.root, cfg)?;
+    let fixture_path = cfg.root.join(fixture);
+    let captured = engine::capture(&cfg.root, capture)?;
     let mut text =
         serde_json::to_string_pretty(&captured).map_err(|e| format!("serialize: {e}"))?;
     text.push('\n');
-    std::fs::write(&fixture_path, text).map_err(|e| format!("write {}: {e}", cfg.fixture))?;
-    println!("plumbline: rewrote {} from a fresh capture", cfg.fixture);
+    std::fs::write(&fixture_path, text).map_err(|e| format!("write {fixture}: {e}"))?;
+    println!("plumbline: rewrote {fixture} from a fresh capture");
 
     // The capture above already built the binary; render every block from it.
     for gen in &cfg.generated {
@@ -103,18 +115,30 @@ pub fn cmd_capture(cfg: &Config, check_only: bool) -> Result<(), String> {
     Ok(())
 }
 
+/// Both `capture` verbs and the fixture-freshness gate need a declared capture
+/// command and a committed fixture. A contract-less crate has neither; refuse
+/// cleanly rather than unwrap a `None`.
+fn require_contract(cfg: &Config) -> Result<(&Capture, &str), String> {
+    match (&cfg.capture, &cfg.fixture) {
+        (Some(c), Some(f)) => Ok((c, f.as_str())),
+        _ => Err("this crate declares no `capture`/`fixture`; \
+                  there is no contract to capture"
+            .into()),
+    }
+}
+
 /// Assert the committed fixture is contract-equivalent to a fresh capture from
 /// the binary being packaged. Shared by `capture --check` and `preflight`.
 fn fixture_matches_binary(cfg: &Config) -> Result<(), String> {
-    let captured = engine::capture(&cfg.root, cfg)?;
-    let committed = read_json(&cfg.root.join(&cfg.fixture))?;
+    let (capture, fixture) = require_contract(cfg)?;
+    let captured = engine::capture(&cfg.root, capture)?;
+    let committed = read_json(&cfg.root.join(fixture))?;
     if normalized(&captured, &cfg.normalize_meta) == normalized(&committed, &cfg.normalize_meta) {
         Ok(())
     } else {
         Err(format!(
-            "committed fixture {} is STALE: a fresh capture differs. \
-             Run `plumb capture` and reconcile the docs.",
-            cfg.fixture
+            "committed fixture {fixture} is STALE: a fresh capture differs. \
+             Run `plumb capture` and reconcile the docs."
         ))
     }
 }
@@ -124,39 +148,41 @@ fn fixture_matches_binary(cfg: &Config) -> Result<(), String> {
 pub fn cmd_preflight(cfg: &Config) -> Result<(), String> {
     let name = cfg
         .capture
-        .command
-        .first()
+        .as_ref()
+        .and_then(|c| c.command.first())
         .cloned()
         .unwrap_or_else(|| "the crate".into());
     println!("preflight: publish gate for `{name}` (crates.io is write-once)");
 
-    // Build the gate list. Gates 1-4 are fixed; gate 5 covers every generated
-    // block, and is present only when the config declares blocks.
+    // Build the gate list. Gates 1, 3 and 4 apply to every crate. Gate 2
+    // (fixture freshness) is present only when the crate declares a contract to
+    // capture; gate 5 (generated blocks) only when it declares blocks. A
+    // contract-less crate (like plumbline) runs the universal gates alone.
     type Gate<'a> = (&'a str, Box<dyn Fn() -> Result<String, String> + 'a>);
-    let mut gates: Vec<Gate> = vec![
-        (
-            "worktree clean and committed",
-            Box::new(|| gate_worktree_clean(cfg)),
-        ),
-        (
+    let mut gates: Vec<Gate> = vec![(
+        "worktree clean and committed",
+        Box::new(|| gate_worktree_clean(cfg)),
+    )];
+    if cfg.capture.is_some() && cfg.fixture.is_some() {
+        gates.push((
             "committed fixture matches the binary",
             Box::new(|| {
                 fixture_matches_binary(cfg)
                     .map(|()| "a fresh capture equals the committed fixture".into())
             }),
-        ),
-        (
-            "docs match the fixture (no stray blocks)",
-            Box::new(|| {
-                check_docs_against_fixture(cfg)
-                    .map(|n| format!("{n} claim(s) match; no stray GENERATED block"))
-            }),
-        ),
-        (
-            "packaged files within the include allowlist",
-            Box::new(|| engine::packaged_within_allowlist(&cfg.root, &cfg.package_allowlist)),
-        ),
-    ];
+        ));
+    }
+    gates.push((
+        "docs match the fixture (no stray blocks)",
+        Box::new(|| {
+            check_docs_against_fixture(cfg)
+                .map(|n| format!("{n} claim(s) match; no stray GENERATED block"))
+        }),
+    ));
+    gates.push((
+        "packaged files within the include allowlist",
+        Box::new(|| engine::packaged_within_allowlist(&cfg.root, &cfg.package_allowlist)),
+    ));
     if !cfg.generated.is_empty() {
         gates.push((
             "generated blocks match the binary",
@@ -222,8 +248,14 @@ fn gate_worktree_clean(cfg: &Config) -> Result<String, String> {
 /// ships the docs verbatim and write-once, so a block that no longer matches real
 /// output would mislead every reader of the published page.
 fn generated_blocks_fresh(cfg: &Config) -> Result<String, String> {
+    // Generated blocks render from the binary, so a capture must be declared
+    // (the loader enforces this pairing; guard rather than unwrap).
+    let capture = cfg
+        .capture
+        .as_ref()
+        .ok_or("generated blocks declared without a `capture`")?;
     // Build once up front so all blocks render from the same binary.
-    engine::run_build(&cfg.root, &cfg.capture.build)?;
+    engine::run_build(&cfg.root, &capture.build)?;
     let mut checked = 0usize;
     for gen in &cfg.generated {
         let doc = std::fs::read_to_string(cfg.root.join(&gen.surface))

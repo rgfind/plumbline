@@ -13,10 +13,13 @@ pub struct Config {
     /// The crate root: the directory `plumb` runs in. All relative paths in the
     /// config resolve here, so the config file itself can live anywhere.
     pub root: PathBuf,
-    /// How to build and capture the contract envelope.
-    pub capture: Capture,
-    /// Path to the committed contract fixture, relative to `root`.
-    pub fixture: String,
+    /// How to build and capture the contract envelope. `None` when the crate
+    /// has no machine-readable contract to capture (plumbline itself is such a
+    /// crate); the contract-dependent gates are then skipped.
+    pub capture: Option<Capture>,
+    /// Path to the committed contract fixture, relative to `root`. `None` when
+    /// the crate declares no fixture.
+    pub fixture: Option<String>,
     /// Meta fields dropped before comparing two captures (volatile ids, times).
     pub normalize_meta: Vec<String>,
     /// Registry claims checked against the fixture.
@@ -68,23 +71,42 @@ impl Config {
         let doc: Value = serde_json::from_str(&text)
             .map_err(|e| format!("config `{}` is not valid JSON: {e}", path.display()))?;
 
-        let capture = &doc["capture"];
-        let capture = Capture {
-            build: str_vec(&capture["build"], "capture.build")?,
-            command: str_vec(&capture["command"], "capture.command")?,
-            env: str_map(&capture["env"], "capture.env")?,
+        // A `capture` block is optional. When present it must be complete
+        // (build + command); a declared-but-empty block is an error, not "no
+        // capture". Absent means the crate has no contract to capture.
+        let capture = match doc.get("capture") {
+            Some(c) if c.is_object() => Some(Capture {
+                build: str_vec(&c["build"], "capture.build")?,
+                command: str_vec(&c["command"], "capture.command")?,
+                env: str_map(&c["env"], "capture.env")?,
+            }),
+            _ => None,
         };
 
-        let fixture = req_str(&doc["fixture"], "fixture")?;
+        let fixture = doc["fixture"].as_str().map(str::to_string);
         let normalize_meta = opt_str_vec(&doc["normalize_meta"]);
         let claims = doc["claims"].as_array().cloned().unwrap_or_default();
-        let surfaces = str_vec(&doc["surfaces"], "surfaces")?;
+        let surfaces = opt_str_vec(&doc["surfaces"]);
 
         let mut generated = Vec::new();
         if let Some(items) = doc["generated"].as_array() {
             for (i, g) in items.iter().enumerate() {
                 generated.push(parse_generated(g, i)?);
             }
+        }
+
+        // Coherence: a partial config must fail loud, not silently do nothing.
+        // Claims are checked against the fixture, so claims need a fixture.
+        // Generated blocks render from the binary, so blocks need a capture.
+        if !claims.is_empty() && fixture.is_none() {
+            return Err("`claims` are declared but `fixture` is missing; \
+                        claims are checked against the fixture"
+                .into());
+        }
+        if !generated.is_empty() && capture.is_none() {
+            return Err("`generated` blocks are declared but `capture` is missing; \
+                        blocks render from the built binary"
+                .into());
         }
 
         let package_allowlist = doc["package_allowlist"]
@@ -214,8 +236,14 @@ mod tests {
             }"#,
         );
         let cfg = Config::load(&p, PathBuf::from(".")).unwrap();
-        assert_eq!(cfg.capture.command, ["rf", "capabilities", "--json"]);
-        assert_eq!(cfg.fixture, "tests/fixtures/contract/capabilities.rc.json");
+        assert_eq!(
+            cfg.capture.as_ref().unwrap().command,
+            ["rf", "capabilities", "--json"]
+        );
+        assert_eq!(
+            cfg.fixture.as_deref(),
+            Some("tests/fixtures/contract/capabilities.rc.json")
+        );
         assert_eq!(cfg.normalize_meta, ["request_id"]);
         assert_eq!(cfg.claims.len(), 1);
         assert_eq!(cfg.generated.len(), 1);
@@ -227,8 +255,41 @@ mod tests {
     }
 
     #[test]
-    fn missing_required_field_errors() {
+    fn declared_but_empty_capture_errors() {
+        // A `capture` block that is present must be complete; empty is a
+        // mistake, not "no contract".
         let p = write_tmp("bad.json", r#"{"capture":{},"surfaces":[]}"#);
+        assert!(Config::load(&p, PathBuf::from(".")).is_err());
+    }
+
+    #[test]
+    fn contract_less_config_loads() {
+        // A crate with no JSON contract (plumbline itself) declares neither
+        // capture nor fixture, and still loads.
+        let p = write_tmp("minimal.json", r#"{"surfaces":["README.md"]}"#);
+        let cfg = Config::load(&p, PathBuf::from(".")).unwrap();
+        assert!(cfg.capture.is_none());
+        assert!(cfg.fixture.is_none());
+        assert!(cfg.claims.is_empty());
+        assert_eq!(cfg.surfaces, ["README.md"]);
+    }
+
+    #[test]
+    fn claims_without_fixture_errors() {
+        let p = write_tmp(
+            "claims-no-fixture.json",
+            r#"{"claims":[{"id":"x","fixture_path":"a","mode":"value","expected":1}]}"#,
+        );
+        assert!(Config::load(&p, PathBuf::from(".")).is_err());
+    }
+
+    #[test]
+    fn generated_without_capture_errors() {
+        let p = write_tmp(
+            "gen-no-capture.json",
+            r#"{"surfaces":["README.md"],
+                "generated":[{"id":"x","surface":"README.md","render":["dummy"],"tree":{}}]}"#,
+        );
         assert!(Config::load(&p, PathBuf::from(".")).is_err());
     }
 }

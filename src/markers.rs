@@ -49,18 +49,34 @@ pub fn replace_generated(text: &str, id: &str, body: &str) -> Result<String, Str
     ))
 }
 
-/// Every GENERATED-block id present in `text`, in order of appearance.
+/// Every live GENERATED-block id present in `text`, in order of appearance.
+///
+/// Markers inside a fenced code block (``` or ~~~) are skipped: a live block is
+/// HTML comments in prose, so a marker shown inside a fence is documentation of
+/// the syntax, not a real block. Without this, a crate whose docs describe the
+/// marker format (plumbline's own README does) would flag its own example.
 pub fn generated_ids(text: &str) -> Vec<String> {
     const NEEDLE: &str = "BEGIN GENERATED:";
     let mut ids = Vec::new();
-    let mut rest = text;
-    while let Some(i) = rest.find(NEEDLE) {
-        let after = &rest[i + NEEDLE.len()..];
-        let id = after.split([' ', '\n', '\r', '\t']).next().unwrap_or("");
-        if !id.is_empty() {
-            ids.push(id.to_string());
+    let mut in_fence = false;
+    for line in text.lines() {
+        let trimmed = line.trim_start();
+        if trimmed.starts_with("```") || trimmed.starts_with("~~~") {
+            in_fence = !in_fence;
+            continue;
         }
-        rest = after;
+        if in_fence {
+            continue;
+        }
+        let mut rest = line;
+        while let Some(i) = rest.find(NEEDLE) {
+            let after = &rest[i + NEEDLE.len()..];
+            let id = after.split([' ', '\n', '\r', '\t']).next().unwrap_or("");
+            if !id.is_empty() {
+                ids.push(id.to_string());
+            }
+            rest = after;
+        }
     }
     ids
 }
@@ -109,5 +125,14 @@ mod tests {
             generated_ids(text),
             vec!["readme-example".to_string(), "exit-codes-table".to_string()]
         );
+    }
+
+    #[test]
+    fn generated_ids_ignores_markers_inside_a_code_fence() {
+        // A live block in prose is found; the same marker shown inside a fenced
+        // example (as plumbline's own README documents it) is not.
+        let text = "<!-- BEGIN GENERATED:live-one -->\nx\n<!-- END GENERATED:live-one -->\n\
+                    \n```\n<!-- BEGIN GENERATED:doc-example -->\n...\n<!-- END GENERATED:doc-example -->\n```\n";
+        assert_eq!(generated_ids(text), vec!["live-one".to_string()]);
     }
 }

@@ -1,0 +1,4 @@
+{
+  "surfaces": ["README.md"],
+  "package_allowlist": "cargo-include"
+}
