@@ -85,27 +85,28 @@ self-contract). Still not ready: plumbline should first guard a real rf release
 as the external tool, and likely wants a crates.io-cold README and a version
 verb. crates.io is write-once, so the bar is high. Docs-in-lockstep rule stands.
 
-## Two concrete gaps found while inspecting rf (2026-09-13)
+## Two gaps found while inspecting rf (2026-09-13) — both now closed
 
-1. **The installed `plumb` is stale.** `~/.cargo/bin/plumb` predates this
-   session — its usage line lacks `capabilities`. RELEASING.md tells a releaser
-   to run `plumb preflight` locally, so they run the old binary. It still guards
-   rf correctly (rf's gates do not need plumb's own `capabilities`), but refresh
-   it: `cargo install --git https://github.com/rgfind/plumbline.git plumbline
-   --locked --force`.
-2. **rf CI runs only `check` + `capture --check`, never full `preflight`.** The
-   worktree-clean, packaged-allowlist, and generated-fresh gates run only at
-   manual release. A packaged-leak or stale generated block could land on rf's
-   main undetected until release day. A tag-triggered CI job running full
-   `plumb preflight` closes this.
+1. **Stale local `plumb` — FIXED.** `~/.cargo/bin/plumb` was from commit
+   16a51c79 (the original standup, pre-`capabilities`). Refreshed to 5ef66f5
+   with `cargo install --git https://github.com/rgfind/plumbline.git plumbline
+   --locked --force`. Verified: usage now lists `capabilities`, `plumb
+   capabilities` emits all 25 codes, and `plumb preflight` on rf still exits 0
+   with the fresh binary. What a releaser runs by hand now matches rf CI.
+2. **rf CI ran only the light checks — FIXED.** Added
+   `rf/.github/workflows/release-preflight.yml` (rf commit cd6a837): full
+   `plumb preflight` (all five gates) fires on any `v*` tag push, backstopping
+   the manual RELEASING.md stop-sign. It does not publish; `cargo publish` stays
+   manual. Caveat: it fires on the tag, so it catches a bad tag but nothing
+   blocks a publish that skips tagging — the human `plumb preflight` per
+   RELEASING.md is still the real enforcement.
 
 ## Next actions, ranked
 
 1. **Guard rf's next release (0.0.6) with external plumbline, for real.** That
-   is the confirmed external use plumbline needs before its own Phase 4.
-2. Close gap 2: add a tag-triggered `plumb preflight` job to rf CI.
-3. Refresh the stale local `plumb` install (gap 1).
-4. Give plumb a crates.io-cold README and a `--version`, then Phase 4 (publish
+   is the confirmed external use plumbline needs before its own Phase 4. Nothing
+   to do until there is a release to cut.
+2. Give plumb a crates.io-cold README and a `--version`, then Phase 4 (publish
    plumb itself) — only after 1.
 
 ## Watch-outs for the next session
