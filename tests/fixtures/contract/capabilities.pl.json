@@ -176,6 +176,11 @@
           "arg": "path",
           "name": "--config",
           "summary": "path to the project config (default ./plumbline.json)"
+        },
+        {
+          "arg": null,
+          "name": "--version",
+          "summary": "print the installed plumb version; needs no config"
         }
       ],
       "tool_version": "0.0.1",
@@ -219,7 +224,7 @@
   "errors": [],
   "meta": {
     "elapsed_ms": 0,
-    "request_id": "bb33-18d4cdb8e99e9be0"
+    "request_id": "11002-18d51a646db05688"
   },
   "ok": true,
   "tool_version": "0.0.1",

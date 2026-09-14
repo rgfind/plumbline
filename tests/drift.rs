@@ -75,7 +75,12 @@ fn scaffold(dir: &Path) {
 /// Run `plumb check` with `root` as the working directory (so the config's
 /// relative fixture path resolves there), using the default `./plumbline.json`.
 fn run_check(root: &Path) -> Output {
-    Command::new(env!("CARGO_BIN_EXE_plumb"))
+    // Cargo can provide a relative test-binary path. Make it absolute before
+    // changing into the synthetic project tree.
+    let binary = PathBuf::from(env!("CARGO_BIN_EXE_plumb"))
+        .canonicalize()
+        .expect("resolve plumb test binary");
+    Command::new(binary)
         .arg("check")
         .current_dir(root)
         .output()

@@ -17,6 +17,8 @@
 //!   plumb capabilities         emit plumb's own contract (verbs, exit codes,
 //!                              gates, and the full error-code catalog) as JSON
 //!                              on stdout. Needs no config; runs anywhere.
+//!   plumb --version            print the installed plumb version. Needs no
+//!                              config; runs anywhere.
 //!
 //! A project describes itself in one JSON config (default `plumbline.json` in the
 //! working directory, or `--config <path>`). The working directory is the crate
@@ -37,6 +39,11 @@ use std::process::ExitCode;
 
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
+
+    if args.len() == 1 && args[0] == "--version" {
+        println!("plumb {}", env!("CARGO_PKG_VERSION"));
+        return ExitCode::SUCCESS;
+    }
 
     // Pull an optional `--config <path>` from anywhere in the args; the rest is
     // the verb and its flags.
@@ -59,7 +66,7 @@ fn main() -> ExitCode {
         return fail(Diagnostic::new(
             codes::USAGE,
             "usage: plumb [--config <path>] \
-             <check | capture [--check] | preflight | capabilities>",
+             <check | capture [--check] | preflight | capabilities>\n       plumb --version",
         ));
     }
 

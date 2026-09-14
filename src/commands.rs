@@ -374,7 +374,9 @@ pub fn cmd_capabilities() -> Result<(), Diagnostic> {
         },
         "global_flags": [
             {"name": "--config", "arg": "path",
-             "summary": "path to the project config (default ./plumbline.json)"}
+             "summary": "path to the project config (default ./plumbline.json)"},
+            {"name": "--version", "arg": null,
+             "summary": "print the installed plumb version; needs no config"}
         ],
         "verbs": {
             "check": {"flags": [], "needs_contract": false,
