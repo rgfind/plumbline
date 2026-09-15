@@ -38,7 +38,7 @@ pub fn render(result: Result<CommandResult, Diagnostic>, json_mode: bool, starte
         ),
         Err(error) => (
             false,
-            Value::Null,
+            error.data.clone().unwrap_or(Value::Null),
             String::new(),
             Vec::new(),
             vec![error.as_json()],

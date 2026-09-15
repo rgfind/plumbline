@@ -223,81 +223,81 @@ fn fixture_matches_binary(cfg: &Config) -> Result<(), Diagnostic> {
 // ---- preflight (the publish stop-sign) -------------------------------------
 
 pub fn cmd_preflight(cfg: &Config) -> Result<CommandResult, Diagnostic> {
-    let name = cfg
-        .capture
-        .as_ref()
-        .and_then(|c| c.command.first())
-        .cloned()
-        .unwrap_or_else(|| "the crate".into());
-    let mut human = vec![format!(
-        "preflight: publish gate for `{name}` (crates.io is write-once)"
-    )];
-
-    // Build the gate list. Gates 1, 3 and 4 apply to every crate. Gate 2
-    // (fixture freshness) is present only when the crate declares a contract to
-    // capture; gate 5 (generated blocks) only when it declares blocks. A
-    // contract-less crate (like plumbline) runs the universal gates alone.
-    type Gate<'a> = (&'a str, Box<dyn Fn() -> Result<String, Diagnostic> + 'a>);
-    let mut gates: Vec<Gate> = vec![(
-        "worktree clean and committed",
-        Box::new(|| gate_worktree_clean(cfg)),
-    )];
-    if cfg.capture.is_some() && cfg.fixture.is_some() {
-        gates.push((
-            "committed fixture matches the binary",
+    type Gate<'a> = (
+        &'a str,
+        &'a str,
+        Option<&'a str>,
+        Box<dyn Fn() -> Result<String, Diagnostic> + 'a>,
+    );
+    let gates: Vec<Gate> = vec![
+        (
+            "worktree-clean",
+            "worktree clean and committed",
+            None,
+            Box::new(|| gate_worktree_clean(cfg)),
+        ),
+        (
+            "fixture-fresh",
+            "committed fixture matches binary",
+            (!cfg.capture.is_some() || !cfg.fixture.is_some())
+                .then_some("no-capture-fixture-contract"),
             Box::new(|| {
-                fixture_matches_binary(cfg)
-                    .map(|()| "a fresh capture equals the committed fixture".into())
+                fixture_matches_binary(cfg).map(|_| "fresh capture matches fixture".into())
             }),
-        ));
-    }
-    gates.push((
-        "docs match the fixture (no stray blocks)",
-        Box::new(|| {
-            check_docs_against_fixture(cfg)
-                .map(|n| format!("{n} claim(s) match; no stray GENERATED block"))
-        }),
-    ));
-    gates.push((
-        "packaged files within the include allowlist",
-        Box::new(|| engine::packaged_within_allowlist(&cfg.root, &cfg.package_allowlist)),
-    ));
-    if !cfg.generated.is_empty() {
-        gates.push((
-            "generated blocks match the binary",
+        ),
+        (
+            "docs-stray-block",
+            "docs match fixture",
+            None,
+            Box::new(|| {
+                check_docs_against_fixture(cfg).map(|count| format!("{count} claims match"))
+            }),
+        ),
+        (
+            "packaged-allowlist",
+            "packaged files within allowlist",
+            None,
+            Box::new(|| engine::packaged_within_allowlist(&cfg.root, &cfg.package_allowlist)),
+        ),
+        (
+            "generated-fresh",
+            "generated blocks match binary",
+            cfg.generated.is_empty().then_some("no-generated-blocks"),
             Box::new(|| generated_blocks_fresh(cfg)),
-        ));
-    }
-
-    let total = gates.len();
+        ),
+    ];
+    let mut records = Vec::new();
+    let mut human = Vec::new();
     let mut failures = 0usize;
-    for (i, (label, run)) in gates.iter().enumerate() {
-        let step = i + 1;
-        match run() {
-            Ok(note) => human.push(format!("  [{step}/{total}] PASS  {label} — {note}")),
-            Err(d) => {
-                failures += 1;
-                human.push(format!("  [{step}/{total}] FAIL  {label}"));
-                // Print the failing gate's own diagnostic, code and all, so the
-                // leaf code (for example `[STRAY_BLOCK]`) is visible per gate.
-                for line in d.to_string().lines() {
-                    human.push(format!("            {line}"));
+    for (id, label, skipped, run) in gates {
+        if let Some(reason) = skipped {
+            records.push(json!({"id": id, "label": label, "status": "skipped", "reason": reason}));
+            human.push(format!("SKIP {id}: {reason}"));
+        } else {
+            match run() {
+                Ok(reason) => {
+                    records.push(
+                        json!({"id": id, "label": label, "status": "passed", "reason": reason}),
+                    );
+                    human.push(format!("PASS {id}"));
+                }
+                Err(error) => {
+                    failures += 1;
+                    records.push(json!({"id": id, "label": label, "status": "failed", "diagnostic": error.as_json()}));
+                    human.push(format!("FAIL {id}: {}", error.code.name));
                 }
             }
         }
     }
-
+    let report = json!({"operation": "preflight", "status": if failures == 0 { "passed" } else { "blocked" }, "gates": records});
     if failures == 0 {
-        human.push("preflight: OK — every gate passed; safe to `cargo publish`".into());
-        Ok(CommandResult::new(
-            json!({"operation": "preflight", "status": "passed"}),
-            human.join("\n"),
-        ))
+        Ok(CommandResult::new(report, human.join("\n")))
     } else {
         Err(Diagnostic::new(
-            codes::PREFLIGHT_FAILED,
-            format!("{failures} gate(s) failed; do NOT `cargo publish` until each is green"),
-        ))
+            codes::PREFLIGHT_BLOCKED,
+            format!("{failures} preflight gate(s) failed"),
+        )
+        .with_data(report))
     }
 }
 

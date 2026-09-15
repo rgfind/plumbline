@@ -76,6 +76,7 @@ pub struct Code {
 pub struct Diagnostic {
     pub code: Code,
     pub message: String,
+    pub data: Option<serde_json::Value>,
 }
 
 impl Diagnostic {
@@ -83,7 +84,13 @@ impl Diagnostic {
         Diagnostic {
             code,
             message: message.into(),
+            data: None,
         }
+    }
+
+    pub fn with_data(mut self, data: serde_json::Value) -> Diagnostic {
+        self.data = Some(data);
+        self
     }
 
     pub fn exit(&self) -> u8 {
@@ -178,6 +185,7 @@ pub mod codes {
         PACKAGED_LEAK: Gate = "a packaged file falls outside the include allowlist",
         BLOCK_STALE: Gate = "a generated block differs from a fresh render",
         PREFLIGHT_FAILED: Gate = "one or more gates failed (the aggregate; the gate codes are the ground truth)",
+        PREFLIGHT_BLOCKED: Gate = "one or more preflight gates blocked a release",
         RELEASE_BRANCH_MISMATCH: Gate = "HEAD is detached or is not on the configured release branch",
         UPSTREAM_NOT_SYNCED: Gate = "the configured release branch is ahead of or behind its upstream",
         CHANGELOG_VERSION_MISSING: Gate = "CHANGELOG.md has no accepted H2 heading for the package version",
