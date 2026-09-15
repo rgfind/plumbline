@@ -322,7 +322,7 @@ fn segment_glob(pat: &str, s: &str) -> bool {
     }
 }
 
-fn cargo() -> String {
+pub(crate) fn cargo() -> String {
     std::env::var("CARGO").unwrap_or_else(|_| "cargo".into())
 }
 

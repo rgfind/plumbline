@@ -31,6 +31,7 @@ mod diagnostic;
 mod engine;
 mod markers;
 mod registry;
+mod release;
 
 use config::Config;
 use diagnostic::{codes, Diagnostic};
@@ -62,11 +63,14 @@ fn main() -> ExitCode {
     }
 
     let cmd = rest.first().map(String::as_str).unwrap_or("");
-    if !matches!(cmd, "check" | "capture" | "preflight" | "capabilities") {
+    if !matches!(
+        cmd,
+        "check" | "capture" | "preflight" | "release" | "capabilities"
+    ) {
         return fail(Diagnostic::new(
             codes::USAGE,
             "usage: plumb [--config <path>] \
-             <check | capture [--check] | preflight | capabilities>\n       plumb --version",
+             <check | capture [--check] | preflight | release | capabilities>\n       plumb --version",
         ));
     }
 
@@ -99,6 +103,7 @@ fn main() -> ExitCode {
             commands::cmd_capture(&cfg, rest.get(1).map(String::as_str) == Some("--check"))
         }
         "preflight" => commands::cmd_preflight(&cfg),
+        "release" => commands::cmd_release(&cfg),
         _ => unreachable!("verb already validated"),
     };
 

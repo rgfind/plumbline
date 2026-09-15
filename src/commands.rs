@@ -15,6 +15,7 @@ use crate::diagnostic::{codes, Diagnostic};
 use crate::engine;
 use crate::markers::{extract_generated, generated_ids, replace_generated};
 use crate::registry::{check_claims, normalized};
+use crate::release;
 use serde_json::{json, Map, Value};
 use std::path::Path;
 use std::process::Command;
@@ -257,6 +258,14 @@ pub fn cmd_preflight(cfg: &Config) -> Result<(), Diagnostic> {
             format!("{failures} gate(s) failed; do NOT `cargo publish` until each is green"),
         ))
     }
+}
+
+/// Validate and publish one guarded release. The release module owns every
+/// external Git and Cargo call; preflight remains in-process so it keeps the
+/// same complete gate report as the standalone command.
+pub fn cmd_release(cfg: &Config) -> Result<(), Diagnostic> {
+    let mut runner = release::SystemRunner;
+    release::run(cfg, &mut runner, || cmd_preflight(cfg))
 }
 
 /// Gate: the git worktree has no uncommitted changes. `cargo publish` packages
