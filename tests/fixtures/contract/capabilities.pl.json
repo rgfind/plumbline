@@ -1,293 +1,820 @@
 {
-  "commands": [
-    "check",
-    "capture",
-    "preflight",
-    "release",
-    "capabilities"
-  ],
-  "data": [
-    {
-      "contract_version": "1",
-      "error_codes": {
-        "ALLOWLIST_UNKNOWN": {
-          "exit": 1,
-          "family": "CONFIG",
-          "meaning": "the package_allowlist value is not recognized"
-        },
-        "BLOCK_STALE": {
-          "exit": 1,
-          "family": "GATE",
-          "meaning": "a generated block differs from a fresh render"
-        },
-        "BUILD_FAILED": {
-          "exit": 1,
-          "family": "CAPTURE",
-          "meaning": "the build command exited non-zero"
-        },
-        "CAPTURE_NOT_JSON": {
-          "exit": 1,
-          "family": "CAPTURE",
-          "meaning": "captured stdout was not valid JSON"
-        },
-        "CAPTURE_RUN_FAILED": {
-          "exit": 1,
-          "family": "CAPTURE",
-          "meaning": "the capture command was empty or exited non-zero"
-        },
-        "CARGO_METADATA_FAILED": {
-          "exit": 1,
-          "family": "ENV",
-          "meaning": "cargo metadata could not run, failed, or produced unusable data"
-        },
-        "CARGO_UNAVAILABLE": {
-          "exit": 1,
-          "family": "ENV",
-          "meaning": "cargo publish --dry-run could not start"
-        },
-        "CHANGELOG_VERSION_MISSING": {
-          "exit": 1,
-          "family": "GATE",
-          "meaning": "CHANGELOG.md has no accepted H2 heading for the package version"
-        },
-        "CLAIM_DRIFT": {
-          "exit": 1,
-          "family": "GATE",
-          "meaning": "a registered claim no longer equals its fixture field"
-        },
-        "CONFIG_INCOHERENT": {
-          "exit": 1,
-          "family": "CONFIG",
-          "meaning": "claims declared without a fixture, or generated blocks without a capture"
-        },
-        "CONFIG_INVALID_JSON": {
-          "exit": 1,
-          "family": "CONFIG",
-          "meaning": "the config file is not valid JSON"
-        },
-        "CONFIG_SCHEMA": {
-          "exit": 1,
-          "family": "CONFIG",
-          "meaning": "a field is missing or mistyped inside a declared block"
-        },
-        "CONFIG_UNREADABLE": {
-          "exit": 1,
-          "family": "CONFIG",
-          "meaning": "the config file could not be read"
-        },
-        "FIXTURE_STALE": {
-          "exit": 1,
-          "family": "GATE",
-          "meaning": "a fresh capture differs from the committed fixture"
-        },
-        "FIXTURE_UNREADABLE": {
-          "exit": 1,
-          "family": "ENV",
-          "meaning": "the committed fixture could not be read or parsed"
-        },
-        "GIT_UNAVAILABLE": {
-          "exit": 1,
-          "family": "ENV",
-          "meaning": "git status could not run"
-        },
-        "MARKER_MISSING": {
-          "exit": 1,
-          "family": "CAPTURE",
-          "meaning": "a block's BEGIN or END marker was not found on its surface"
-        },
-        "NO_CONTRACT": {
-          "exit": 1,
-          "family": "CAPTURE",
-          "meaning": "capture was invoked on a crate that declares no capture or fixture"
-        },
-        "PACKAGED_LEAK": {
-          "exit": 1,
-          "family": "GATE",
-          "meaning": "a packaged file falls outside the include allowlist"
-        },
-        "PACKAGE_LIST_FAILED": {
-          "exit": 1,
-          "family": "ENV",
-          "meaning": "cargo package --list failed (for example a dirty tree without --allow-dirty)"
-        },
-        "PREFLIGHT_FAILED": {
-          "exit": 1,
-          "family": "GATE",
-          "meaning": "one or more gates failed (the aggregate; the gate codes are the ground truth)"
-        },
-        "PUBLISH_DRY_RUN_FAILED": {
-          "exit": 1,
-          "family": "GATE",
-          "meaning": "cargo publish --dry-run --locked failed"
-        },
-        "PUSH_FAILED": {
-          "exit": 1,
-          "family": "ENV",
-          "meaning": "the branch and release tag could not be pushed atomically"
-        },
-        "RELEASE_BRANCH_MISMATCH": {
-          "exit": 1,
-          "family": "GATE",
-          "meaning": "HEAD is detached or is not on the configured release branch"
-        },
-        "RELEASE_CONFIG_MISSING": {
-          "exit": 1,
-          "family": "CONFIG",
-          "meaning": "release was requested but the config has no release object"
-        },
-        "REMOTE_UNAVAILABLE": {
-          "exit": 1,
-          "family": "ENV",
-          "meaning": "the configured git remote could not be queried"
-        },
-        "RENDER_FAILED": {
-          "exit": 1,
-          "family": "CAPTURE",
-          "meaning": "a render command was empty, exited non-zero, or emitted non-UTF-8"
-        },
-        "STRAY_BLOCK": {
-          "exit": 1,
-          "family": "GATE",
-          "meaning": "a surface carries a GENERATED block with no declared renderer"
-        },
-        "SURFACE_UNREADABLE": {
-          "exit": 1,
-          "family": "ENV",
-          "meaning": "a doc surface could not be read"
-        },
-        "TAG_CREATE_FAILED": {
-          "exit": 1,
-          "family": "ENV",
-          "meaning": "the annotated release tag could not be created"
-        },
-        "TAG_EXISTS": {
-          "exit": 1,
-          "family": "GATE",
-          "meaning": "the release tag already exists locally or on the configured remote"
-        },
-        "UPSTREAM_NOT_SYNCED": {
-          "exit": 1,
-          "family": "GATE",
-          "meaning": "the configured release branch is ahead of or behind its upstream"
-        },
-        "USAGE": {
-          "exit": 2,
-          "family": "USAGE",
-          "meaning": "unknown verb, or --config given without a path value"
-        },
-        "WORKDIR_UNREADABLE": {
-          "exit": 1,
-          "family": "ENV",
-          "meaning": "the working directory could not be determined"
-        },
-        "WORKTREE_DIRTY": {
-          "exit": 1,
-          "family": "GATE",
-          "meaning": "uncommitted paths in the tree to be packaged"
-        },
-        "WRITE_FAILED": {
-          "exit": 1,
-          "family": "ENV",
-          "meaning": "the fixture or a doc surface could not be written"
-        }
+  "commands": [],
+  "data": {
+    "contract_version": "0.1",
+    "error_codes": {
+      "ALLOWLIST_UNKNOWN": {
+        "exit": 3,
+        "family": "CONFIG",
+        "meaning": "the package_allowlist value is not recognized"
       },
-      "exit_codes": {
-        "0": {
-          "meaning": "success; every gate and claim held",
-          "retryable": false
-        },
-        "1": {
-          "meaning": "a gate, claim, capture, or config step failed",
-          "retryable": false
-        },
-        "2": {
-          "meaning": "usage error (unknown verb, or --config without a path)",
-          "retryable": false
-        }
+      "BLOCK_STALE": {
+        "exit": 2,
+        "family": "GATE",
+        "meaning": "a generated block differs from a fresh render"
       },
-      "gates": [
+      "BUILD_FAILED": {
+        "exit": 3,
+        "family": "CAPTURE",
+        "meaning": "the build command exited non-zero"
+      },
+      "CAPTURE_NOT_JSON": {
+        "exit": 3,
+        "family": "CAPTURE",
+        "meaning": "captured stdout was not valid JSON"
+      },
+      "CAPTURE_RUN_FAILED": {
+        "exit": 3,
+        "family": "CAPTURE",
+        "meaning": "the capture command was empty or exited non-zero"
+      },
+      "CARGO_METADATA_FAILED": {
+        "exit": 3,
+        "family": "ENV",
+        "meaning": "cargo metadata could not run, failed, or produced unusable data"
+      },
+      "CARGO_UNAVAILABLE": {
+        "exit": 3,
+        "family": "ENV",
+        "meaning": "cargo publish --dry-run could not start"
+      },
+      "CHANGELOG_VERSION_MISSING": {
+        "exit": 2,
+        "family": "GATE",
+        "meaning": "CHANGELOG.md has no accepted H2 heading for the package version"
+      },
+      "CLAIM_DRIFT": {
+        "exit": 2,
+        "family": "GATE",
+        "meaning": "a registered claim no longer equals its fixture field"
+      },
+      "CONFIG_INCOHERENT": {
+        "exit": 3,
+        "family": "CONFIG",
+        "meaning": "claims declared without a fixture, or generated blocks without a capture"
+      },
+      "CONFIG_INVALID_JSON": {
+        "exit": 3,
+        "family": "CONFIG",
+        "meaning": "the config file is not valid JSON"
+      },
+      "CONFIG_SCHEMA": {
+        "exit": 3,
+        "family": "CONFIG",
+        "meaning": "a field is missing or mistyped inside a declared block"
+      },
+      "CONFIG_UNREADABLE": {
+        "exit": 3,
+        "family": "CONFIG",
+        "meaning": "the config file could not be read"
+      },
+      "CONFIG_WRITE_CONFLICT": {
+        "exit": 5,
+        "family": "CONFLICT",
+        "meaning": "the selected configuration changed before the requested write"
+      },
+      "FIXTURE_STALE": {
+        "exit": 2,
+        "family": "GATE",
+        "meaning": "a fresh capture differs from the committed fixture"
+      },
+      "FIXTURE_UNREADABLE": {
+        "exit": 3,
+        "family": "ENV",
+        "meaning": "the committed fixture could not be read or parsed"
+      },
+      "GIT_UNAVAILABLE": {
+        "exit": 3,
+        "family": "ENV",
+        "meaning": "git status could not run"
+      },
+      "INTERNAL": {
+        "exit": 6,
+        "family": "INTERNAL",
+        "meaning": "plumb encountered an unexpected internal defect"
+      },
+      "INVALID_INPUT": {
+        "exit": 1,
+        "family": "USAGE",
+        "meaning": "the command input is malformed or has an invalid value"
+      },
+      "LOCKED": {
+        "exit": 4,
+        "family": "TRANSIENT",
+        "meaning": "a short advisory lock is busy; retry after it is released"
+      },
+      "MARKER_MISSING": {
+        "exit": 3,
+        "family": "CAPTURE",
+        "meaning": "a block's BEGIN or END marker was not found on its surface"
+      },
+      "MISSING_REQUIRED": {
+        "exit": 1,
+        "family": "USAGE",
+        "meaning": "a required argument or mode selector is missing"
+      },
+      "NOT_FOUND": {
+        "exit": 1,
+        "family": "USAGE",
+        "meaning": "a requested declared value does not exist"
+      },
+      "NO_CONTRACT": {
+        "exit": 3,
+        "family": "CAPTURE",
+        "meaning": "capture was invoked on a crate that declares no capture or fixture"
+      },
+      "PACKAGED_LEAK": {
+        "exit": 2,
+        "family": "GATE",
+        "meaning": "a packaged file falls outside the include allowlist"
+      },
+      "PACKAGE_LIST_FAILED": {
+        "exit": 3,
+        "family": "ENV",
+        "meaning": "cargo package --list failed (for example a dirty tree without --allow-dirty)"
+      },
+      "PREFLIGHT_BLOCKED": {
+        "exit": 2,
+        "family": "GATE",
+        "meaning": "one or more preflight gates blocked a release"
+      },
+      "PREFLIGHT_FAILED": {
+        "exit": 2,
+        "family": "GATE",
+        "meaning": "one or more gates failed (the aggregate; the gate codes are the ground truth)"
+      },
+      "PUBLISH_DRY_RUN_FAILED": {
+        "exit": 2,
+        "family": "GATE",
+        "meaning": "cargo publish --dry-run --locked failed"
+      },
+      "PUSH_FAILED": {
+        "exit": 3,
+        "family": "ENV",
+        "meaning": "the branch and release tag could not be pushed atomically"
+      },
+      "RELEASE_BRANCH_MISMATCH": {
+        "exit": 2,
+        "family": "GATE",
+        "meaning": "HEAD is detached or is not on the configured release branch"
+      },
+      "RELEASE_CONFIG_MISSING": {
+        "exit": 3,
+        "family": "CONFIG",
+        "meaning": "release was requested but the config has no release object"
+      },
+      "RELEASE_STATE_CONFLICT": {
+        "exit": 5,
+        "family": "CONFLICT",
+        "meaning": "the existing release state cannot prove a completed matching submission"
+      },
+      "REMOTE_UNAVAILABLE": {
+        "exit": 3,
+        "family": "ENV",
+        "meaning": "the configured git remote could not be queried"
+      },
+      "RENDER_FAILED": {
+        "exit": 3,
+        "family": "CAPTURE",
+        "meaning": "a render command was empty, exited non-zero, or emitted non-UTF-8"
+      },
+      "STRAY_BLOCK": {
+        "exit": 2,
+        "family": "GATE",
+        "meaning": "a surface carries a GENERATED block with no declared renderer"
+      },
+      "SURFACE_UNREADABLE": {
+        "exit": 3,
+        "family": "ENV",
+        "meaning": "a doc surface could not be read"
+      },
+      "TAG_CREATE_FAILED": {
+        "exit": 3,
+        "family": "ENV",
+        "meaning": "the annotated release tag could not be created"
+      },
+      "TAG_EXISTS": {
+        "exit": 5,
+        "family": "CONFLICT",
+        "meaning": "the release tag already exists locally or on the configured remote"
+      },
+      "UNKNOWN_COMMAND": {
+        "exit": 1,
+        "family": "USAGE",
+        "meaning": "the command name is not declared"
+      },
+      "UNKNOWN_FLAG": {
+        "exit": 1,
+        "family": "USAGE",
+        "meaning": "the flag is not declared for this command"
+      },
+      "UPSTREAM_NOT_SYNCED": {
+        "exit": 2,
+        "family": "GATE",
+        "meaning": "the configured release branch is ahead of or behind its upstream"
+      },
+      "USAGE": {
+        "exit": 1,
+        "family": "USAGE",
+        "meaning": "legacy invalid command input"
+      },
+      "WORKDIR_UNREADABLE": {
+        "exit": 3,
+        "family": "ENV",
+        "meaning": "the working directory could not be determined"
+      },
+      "WORKTREE_DIRTY": {
+        "exit": 2,
+        "family": "GATE",
+        "meaning": "uncommitted paths in the tree to be packaged"
+      },
+      "WRITE_FAILED": {
+        "exit": 3,
+        "family": "ENV",
+        "meaning": "the fixture or a doc surface could not be written"
+      }
+    },
+    "exit_codes": {
+      "0": {
+        "meaning": "success",
+        "retryable": null
+      },
+      "1": {
+        "meaning": "invalid caller input",
+        "retryable": false
+      },
+      "2": {
+        "meaning": "safety block",
+        "retryable": false
+      },
+      "3": {
+        "meaning": "local tool or environment error",
+        "retryable": null
+      },
+      "4": {
+        "meaning": "transient failure",
+        "retryable": true
+      },
+      "5": {
+        "meaning": "conflict",
+        "retryable": false
+      },
+      "6": {
+        "meaning": "internal defect",
+        "retryable": false
+      }
+    },
+    "gates": [
+      {
+        "applies_when": "always",
+        "id": "worktree-clean"
+      },
+      {
+        "applies_when": "a capture and fixture are declared",
+        "id": "fixture-fresh"
+      },
+      {
+        "applies_when": "always",
+        "id": "docs-stray-block"
+      },
+      {
+        "applies_when": "always",
+        "id": "packaged-allowlist"
+      },
+      {
+        "applies_when": "generated blocks are declared",
+        "id": "generated-fresh"
+      }
+    ],
+    "global_flags": [
+      {
+        "arg": "path",
+        "name": "--config",
+        "summary": "path to the project config (default ./plumbline.json)"
+      },
+      {
+        "arg": null,
+        "name": "--json",
+        "summary": "select machine output"
+      },
+      {
+        "arg": null,
+        "name": "--no-color",
+        "summary": "disable ANSI in human output"
+      },
+      {
+        "arg": "auto|always|never",
+        "name": "--color",
+        "summary": "select human ANSI policy"
+      },
+      {
+        "arg": null,
+        "name": "--help",
+        "summary": "show terse help"
+      },
+      {
+        "arg": null,
+        "name": "--version",
+        "summary": "print the installed plumb version; needs no config"
+      }
+    ],
+    "parser_manifest": {
+      "commands": [
         {
-          "applies_when": "always",
-          "id": "worktree-clean"
+          "flags": [],
+          "name": "check",
+          "subcommands": null
         },
         {
-          "applies_when": "a capture and fixture are declared",
-          "id": "fixture-fresh"
+          "flags": [
+            "--check",
+            "--yes"
+          ],
+          "name": "capture",
+          "subcommands": null
         },
         {
-          "applies_when": "always",
-          "id": "docs-stray-block"
+          "flags": [],
+          "name": "preflight",
+          "subcommands": null
         },
         {
-          "applies_when": "always",
-          "id": "packaged-allowlist"
+          "flags": [
+            "--yes",
+            "--dry-run"
+          ],
+          "name": "release",
+          "subcommands": null
         },
         {
-          "applies_when": "generated blocks are declared",
-          "id": "generated-fresh"
+          "flags": [],
+          "name": "capabilities",
+          "subcommands": null
+        },
+        {
+          "flags": [
+            "--command"
+          ],
+          "name": "schema",
+          "subcommands": null
+        },
+        {
+          "flags": [
+            "--yes",
+            "--if-match",
+            "--from-stdin"
+          ],
+          "name": "config",
+          "subcommands": [
+            "schema",
+            "validate",
+            "show",
+            "get",
+            "set",
+            "patch"
+          ]
+        },
+        {
+          "flags": [],
+          "name": "conformance",
+          "subcommands": null
+        },
+        {
+          "flags": [],
+          "name": "contract-doc",
+          "subcommands": null
+        },
+        {
+          "flags": [],
+          "name": "robot-docs",
+          "subcommands": null
         }
       ],
       "global_flags": [
-        {
-          "arg": "path",
-          "name": "--config",
-          "summary": "path to the project config (default ./plumbline.json)"
-        },
-        {
-          "arg": null,
-          "name": "--version",
-          "summary": "print the installed plumb version; needs no config"
-        }
+        "--config",
+        "--json",
+        "--no-color",
+        "--color",
+        "--help",
+        "--version"
+      ]
+    },
+    "tool_version": "0.0.3",
+    "value_domains": {
+      "claim_mode": [
+        "value",
+        "keys",
+        "set"
       ],
-      "tool_version": "0.0.2",
-      "value_domains": {
-        "claim_mode": [
-          "value",
-          "keys",
-          "set"
+      "package_allowlist": [
+        "cargo-include"
+      ]
+    },
+    "verbs": {
+      "capabilities": {
+        "description": "return the live command contract",
+        "examples": [
+          "plumb capabilities --json"
         ],
-        "package_allowlist": [
-          "cargo-include"
+        "flags": [],
+        "meta_fields": [
+          "request_id",
+          "ts_iso",
+          "elapsed_ms",
+          "contract_version",
+          "schema_version"
+        ],
+        "mutates": false,
+        "needs_config": false,
+        "output_modes": [
+          "text",
+          "json"
+        ],
+        "payload_schema": {
+          "type": "object"
+        },
+        "positionals": [],
+        "possible_exit_codes": [
+          0,
+          1,
+          2,
+          3,
+          4,
+          5,
+          6
         ]
       },
-      "verbs": {
-        "capabilities": {
-          "flags": [],
-          "needs_contract": false,
-          "summary": "emit this contract as JSON"
+      "capture": {
+        "description": "capture or compare current binary output",
+        "examples": [
+          "plumb capture --json"
+        ],
+        "flags": [
+          "--check",
+          "--yes"
+        ],
+        "meta_fields": [
+          "request_id",
+          "ts_iso",
+          "elapsed_ms",
+          "contract_version",
+          "schema_version"
+        ],
+        "mutates": true,
+        "needs_config": true,
+        "output_modes": [
+          "text",
+          "json"
+        ],
+        "payload_schema": {
+          "type": "object"
         },
-        "capture": {
-          "flags": [
-            "--check"
-          ],
-          "needs_contract": true,
-          "summary": "rewrite the fixture from a fresh run; re-render blocks"
-        },
-        "check": {
-          "flags": [],
-          "needs_contract": false,
-          "summary": "claims equal the fixture; no stray blocks"
-        },
-        "preflight": {
-          "flags": [],
-          "needs_contract": false,
-          "summary": "the publish stop-sign; run every applicable gate"
-        },
-        "release": {
-          "flags": [],
-          "needs_contract": false,
-          "summary": "validate, tag, and atomically push; publish is dry-run only locally"
-        }
+        "positionals": [],
+        "possible_exit_codes": [
+          0,
+          1,
+          2,
+          3,
+          4,
+          5,
+          6
+        ]
       },
-      "warning_codes": []
-    }
-  ],
+      "check": {
+        "description": "check fixture claims and generated blocks",
+        "examples": [
+          "plumb check --json"
+        ],
+        "flags": [],
+        "meta_fields": [
+          "request_id",
+          "ts_iso",
+          "elapsed_ms",
+          "contract_version",
+          "schema_version"
+        ],
+        "mutates": false,
+        "needs_config": true,
+        "output_modes": [
+          "text",
+          "json"
+        ],
+        "payload_schema": {
+          "type": "object"
+        },
+        "positionals": [],
+        "possible_exit_codes": [
+          0,
+          1,
+          2,
+          3,
+          4,
+          5,
+          6
+        ]
+      },
+      "config": {
+        "description": "inspect or safely change the selected configuration",
+        "examples": [
+          "plumb config --json"
+        ],
+        "flags": [
+          "--yes",
+          "--if-match",
+          "--from-stdin"
+        ],
+        "meta_fields": [
+          "request_id",
+          "ts_iso",
+          "elapsed_ms",
+          "contract_version",
+          "schema_version"
+        ],
+        "mutates": false,
+        "needs_config": false,
+        "output_modes": [
+          "text",
+          "json"
+        ],
+        "payload_schema": {
+          "type": "object"
+        },
+        "positionals": [],
+        "possible_exit_codes": [
+          0,
+          1,
+          2,
+          3,
+          4,
+          5,
+          6
+        ],
+        "subcommands": [
+          {
+            "flags": [],
+            "mutates": false,
+            "name": "schema",
+            "positionals": []
+          },
+          {
+            "flags": [],
+            "mutates": false,
+            "name": "validate",
+            "positionals": []
+          },
+          {
+            "flags": [],
+            "mutates": false,
+            "name": "show",
+            "positionals": []
+          },
+          {
+            "flags": [],
+            "mutates": false,
+            "name": "get",
+            "positionals": [
+              "json-pointer"
+            ]
+          },
+          {
+            "flags": [
+              "--yes",
+              "--if-match"
+            ],
+            "mutates": true,
+            "name": "set",
+            "positionals": [
+              "json-pointer",
+              "json-value"
+            ]
+          },
+          {
+            "flags": [
+              "--from-stdin",
+              "--yes",
+              "--if-match"
+            ],
+            "mutates": true,
+            "name": "patch",
+            "positionals": []
+          }
+        ]
+      },
+      "conformance": {
+        "description": "run installed-command self checks",
+        "examples": [
+          "plumb conformance --json"
+        ],
+        "flags": [],
+        "meta_fields": [
+          "request_id",
+          "ts_iso",
+          "elapsed_ms",
+          "contract_version",
+          "schema_version"
+        ],
+        "mutates": false,
+        "needs_config": false,
+        "output_modes": [
+          "text",
+          "json"
+        ],
+        "payload_schema": {
+          "type": "object"
+        },
+        "positionals": [],
+        "possible_exit_codes": [
+          0,
+          1,
+          2,
+          3,
+          4,
+          5,
+          6
+        ]
+      },
+      "contract-doc": {
+        "description": "render live contract Markdown tables",
+        "examples": [
+          "plumb contract-doc --json"
+        ],
+        "flags": [],
+        "meta_fields": [
+          "request_id",
+          "ts_iso",
+          "elapsed_ms",
+          "contract_version",
+          "schema_version"
+        ],
+        "mutates": false,
+        "needs_config": false,
+        "output_modes": [
+          "text",
+          "json"
+        ],
+        "payload_schema": {
+          "type": "object"
+        },
+        "positionals": [],
+        "possible_exit_codes": [
+          0,
+          1,
+          2,
+          3,
+          4,
+          5,
+          6
+        ]
+      },
+      "preflight": {
+        "description": "run the ordered release gates",
+        "examples": [
+          "plumb preflight --json"
+        ],
+        "flags": [],
+        "meta_fields": [
+          "request_id",
+          "ts_iso",
+          "elapsed_ms",
+          "contract_version",
+          "schema_version"
+        ],
+        "mutates": false,
+        "needs_config": true,
+        "output_modes": [
+          "text",
+          "json"
+        ],
+        "payload_schema": {
+          "type": "object"
+        },
+        "positionals": [],
+        "possible_exit_codes": [
+          0,
+          1,
+          2,
+          3,
+          4,
+          5,
+          6
+        ]
+      },
+      "release": {
+        "description": "validate, tag, and atomically push",
+        "examples": [
+          "plumb release --json"
+        ],
+        "flags": [
+          "--yes",
+          "--dry-run"
+        ],
+        "meta_fields": [
+          "request_id",
+          "ts_iso",
+          "elapsed_ms",
+          "contract_version",
+          "schema_version"
+        ],
+        "mutates": true,
+        "needs_config": true,
+        "output_modes": [
+          "text",
+          "json"
+        ],
+        "payload_schema": {
+          "type": "object"
+        },
+        "positionals": [],
+        "possible_exit_codes": [
+          0,
+          1,
+          2,
+          3,
+          4,
+          5,
+          6
+        ]
+      },
+      "robot-docs": {
+        "description": "render the agent workflow guide",
+        "examples": [
+          "plumb robot-docs --json"
+        ],
+        "flags": [],
+        "meta_fields": [
+          "request_id",
+          "ts_iso",
+          "elapsed_ms",
+          "contract_version",
+          "schema_version"
+        ],
+        "mutates": false,
+        "needs_config": false,
+        "output_modes": [
+          "text",
+          "json"
+        ],
+        "payload_schema": {
+          "type": "object"
+        },
+        "positionals": [],
+        "possible_exit_codes": [
+          0,
+          1,
+          2,
+          3,
+          4,
+          5,
+          6
+        ]
+      },
+      "schema": {
+        "description": "return JSON Schemas for command responses",
+        "examples": [
+          "plumb schema --json"
+        ],
+        "flags": [
+          "--command"
+        ],
+        "meta_fields": [
+          "request_id",
+          "ts_iso",
+          "elapsed_ms",
+          "contract_version",
+          "schema_version"
+        ],
+        "mutates": false,
+        "needs_config": false,
+        "output_modes": [
+          "text",
+          "json"
+        ],
+        "payload_schema": {
+          "type": "object"
+        },
+        "positionals": [],
+        "possible_exit_codes": [
+          0,
+          1,
+          2,
+          3,
+          4,
+          5,
+          6
+        ]
+      }
+    },
+    "warning_codes": []
+  },
   "errors": [],
   "meta": {
+    "contract_version": "0.1",
     "elapsed_ms": 0,
-    "request_id": "13bf7-18d560c616b56d20"
+    "request_id": "req-c2de-18d58fe097602cc8",
+    "schema_version": 1,
+    "ts_iso": "2026-09-15T17:50:21Z"
   },
   "ok": true,
-  "tool_version": "0.0.2",
+  "tool_version": "0.0.3",
   "warnings": []
 }

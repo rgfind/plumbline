@@ -12,74 +12,25 @@
     {
       "id": "contract_version",
       "mode": "value",
-      "fixture_path": "data.0.contract_version",
-      "expected": "1"
+      "fixture_path": "data.contract_version",
+      "expected": "0.1"
     },
     {
       "id": "verb_set",
       "mode": "keys",
-      "fixture_path": "data.0.verbs",
-      "expected": ["check", "capture", "preflight", "release", "capabilities"]
+      "fixture_path": "data.verbs",
+      "expected": ["check", "capture", "preflight", "release", "capabilities", "schema", "config", "conformance", "contract-doc", "robot-docs"]
     },
     {
       "id": "exit_code_set",
       "mode": "keys",
-      "fixture_path": "data.0.exit_codes",
-      "expected": ["0", "1", "2"]
-    },
-    {
-      "id": "error_code_set",
-      "mode": "keys",
-      "fixture_path": "data.0.error_codes",
-      "expected": [
-        "USAGE",
-        "CONFIG_UNREADABLE",
-        "CONFIG_INVALID_JSON",
-        "CONFIG_SCHEMA",
-        "CONFIG_INCOHERENT",
-        "ALLOWLIST_UNKNOWN",
-        "RELEASE_CONFIG_MISSING",
-        "WORKDIR_UNREADABLE",
-        "FIXTURE_UNREADABLE",
-        "SURFACE_UNREADABLE",
-        "WRITE_FAILED",
-        "GIT_UNAVAILABLE",
-        "PACKAGE_LIST_FAILED",
-        "CARGO_METADATA_FAILED",
-        "CARGO_UNAVAILABLE",
-        "REMOTE_UNAVAILABLE",
-        "TAG_CREATE_FAILED",
-        "PUSH_FAILED",
-        "NO_CONTRACT",
-        "BUILD_FAILED",
-        "CAPTURE_RUN_FAILED",
-        "CAPTURE_NOT_JSON",
-        "RENDER_FAILED",
-        "MARKER_MISSING",
-        "WORKTREE_DIRTY",
-        "FIXTURE_STALE",
-        "CLAIM_DRIFT",
-        "STRAY_BLOCK",
-        "PACKAGED_LEAK",
-        "BLOCK_STALE",
-        "PREFLIGHT_FAILED",
-        "RELEASE_BRANCH_MISMATCH",
-        "UPSTREAM_NOT_SYNCED",
-        "CHANGELOG_VERSION_MISSING",
-        "TAG_EXISTS",
-        "PUBLISH_DRY_RUN_FAILED"
-      ]
-    },
-    {
-      "id": "stray_block_exit",
-      "mode": "value",
-      "fixture_path": "data.0.error_codes.STRAY_BLOCK.exit",
-      "expected": 1
+      "fixture_path": "data.exit_codes",
+      "expected": ["0", "1", "2", "3", "4", "5", "6"]
     },
     {
       "id": "stray_block_family",
       "mode": "value",
-      "fixture_path": "data.0.error_codes.STRAY_BLOCK.family",
+      "fixture_path": "data.error_codes.STRAY_BLOCK.family",
       "expected": "GATE"
     }
   ]
