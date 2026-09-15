@@ -14,6 +14,7 @@ pub enum Verb {
     Schema,
     Config,
     Conformance,
+    ContractDoc,
     RobotDocs,
 }
 
@@ -158,6 +159,13 @@ pub const COMMANDS: &[CommandSpec] = &[
         needs_config: false,
     },
     CommandSpec {
+        verb: Verb::ContractDoc,
+        name: "contract-doc",
+        summary: "render live contract Markdown tables",
+        flags: &[],
+        needs_config: false,
+    },
+    CommandSpec {
         verb: Verb::RobotDocs,
         name: "robot-docs",
         summary: "render the agent workflow guide",
@@ -191,6 +199,7 @@ pub struct Invocation {
     pub if_match: Option<String>,
     pub from_stdin: bool,
     pub dry_run: bool,
+    pub contract_doc_section: Option<String>,
 }
 
 pub fn parse(args: &[String]) -> Result<Invocation, Diagnostic> {
@@ -210,6 +219,7 @@ pub fn parse(args: &[String]) -> Result<Invocation, Diagnostic> {
     let mut if_match = None;
     let mut from_stdin = false;
     let mut dry_run = false;
+    let mut contract_doc_section = None;
     let mut raw = false;
     let mut i = 0;
 
@@ -329,6 +339,8 @@ pub fn parse(args: &[String]) -> Result<Invocation, Diagnostic> {
             }
         } else if verb == Some(Verb::Config) {
             config_arguments.push(token.clone());
+        } else if verb == Some(Verb::ContractDoc) && contract_doc_section.is_none() {
+            contract_doc_section = Some(token.clone());
         } else {
             return Err(Diagnostic::new(
                 codes::INVALID_INPUT,
@@ -358,6 +370,7 @@ pub fn parse(args: &[String]) -> Result<Invocation, Diagnostic> {
         if_match,
         from_stdin,
         dry_run,
+        contract_doc_section,
     })
 }
 

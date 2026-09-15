@@ -624,6 +624,29 @@ pub fn cmd_conformance() -> Result<CommandResult, Diagnostic> {
     }
 }
 
+pub fn cmd_contract_doc(section: Option<&str>) -> Result<CommandResult, Diagnostic> {
+    let section = section.ok_or_else(|| {
+        Diagnostic::new(
+            codes::MISSING_REQUIRED,
+            "contract-doc requires one section: verbs, gates, exit-codes, or error-codes",
+        )
+    })?;
+    let markdown = match section {
+        "verbs" => {
+            let mut rows = vec!["| Command | Mutates | Description |".into(), "|---|---:|---|".into()];
+            rows.extend(crate::cli::COMMANDS.iter().map(|spec| format!("| `{}` | {} | {} |", spec.name, matches!(spec.verb, crate::cli::Verb::Capture | crate::cli::Verb::Release), spec.summary))); rows.join("\n")
+        }
+        "gates" => "| Gate | Applies when |\n|---|---|\n| `worktree-clean` | always |\n| `fixture-fresh` | capture and fixture declared |\n| `docs-stray-block` | always |\n| `packaged-allowlist` | always |\n| `generated-fresh` | generated blocks declared |".into(),
+        "exit-codes" => "| Exit | Meaning |\n|---:|---|\n| 0 | success |\n| 1 | invalid input |\n| 2 | safety block |\n| 3 | local error |\n| 4 | transient failure |\n| 5 | conflict |\n| 6 | internal defect |".into(),
+        "error-codes" => { let mut rows = vec!["| Code | Family | Meaning |".into(), "|---|---|---|".into()]; rows.extend(codes::ALL.iter().map(|code| format!("| `{}` | {} | {} |", code.name, code.family.as_str(), code.meaning))); rows.join("\n") }
+        other => return Err(Diagnostic::new(codes::INVALID_INPUT, format!("unknown contract section `{other}`; valid sections are verbs, gates, exit-codes, error-codes"))),
+    };
+    Ok(CommandResult::new(
+        json!({"section":section,"markdown":markdown}),
+        markdown,
+    ))
+}
+
 /// Run one declared configuration command. This is kept separate from product
 /// commands because config inspection must work even when the document has no
 /// capture or release settings.
