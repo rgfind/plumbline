@@ -30,21 +30,7 @@ pub fn render(
         Err(error) => (false, Value::Null, String::new(), Vec::new(), vec![error.as_json()], 1),
     };
     if json_mode {
-        let envelope = json!({
-            "ok": ok,
-            "tool_version": env!("CARGO_PKG_VERSION"),
-            "data": data,
-            "meta": {
-                "request_id": request_id(),
-                "ts_iso": timestamp(),
-                "elapsed_ms": started.elapsed().as_millis() as u64,
-                "contract_version": CONTRACT_VERSION,
-                "schema_version": schema_version,
-            },
-            "warnings": [],
-            "commands": commands,
-            "errors": errors,
-        });
+        let envelope = envelope(ok, data, commands, errors.clone(), schema_version, started.elapsed().as_millis() as u64);
         write_stdout(&format!("{}\n", serde_json::to_string(&envelope).expect("serialize envelope")));
         if !ok {
             let error = &errors[0];
@@ -60,6 +46,31 @@ pub fn render(
         let _ = writeln!(io::stderr(), "plumb: [{code}] {message}");
     }
     if ok { 0 } else { errors[0]["exit_code"].as_u64().unwrap_or(6) as u8 }
+}
+
+fn envelope(
+    ok: bool,
+    data: Value,
+    commands: Vec<String>,
+    errors: Vec<Value>,
+    schema_version: u32,
+    elapsed_ms: u64,
+) -> Value {
+    json!({
+        "ok": ok,
+        "tool_version": env!("CARGO_PKG_VERSION"),
+        "data": data,
+        "meta": {
+            "request_id": request_id(),
+            "ts_iso": timestamp(),
+            "elapsed_ms": elapsed_ms,
+            "contract_version": CONTRACT_VERSION,
+            "schema_version": schema_version,
+        },
+        "warnings": [],
+        "commands": commands,
+        "errors": errors,
+    })
 }
 
 fn write_stdout(text: &str) {
@@ -101,10 +112,35 @@ fn unix_seconds_to_rfc3339(seconds: u64) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::diagnostic::{codes, Diagnostic};
 
     #[test]
     fn unix_epoch_is_rfc3339() {
         assert_eq!(unix_seconds_to_rfc3339(0), "1970-01-01T00:00:00Z");
         assert_eq!(unix_seconds_to_rfc3339(86_400), "1970-01-02T00:00:00Z");
+    }
+
+    #[test]
+    fn pins_all_exit_class_envelope_shapes() {
+        let success = envelope(true, json!({"status": "passed"}), Vec::new(), Vec::new(), 1, 0);
+        assert_eq!(success["ok"], true);
+        assert_eq!(success["errors"], json!([]));
+
+        let cases = [
+            (codes::UNKNOWN_FLAG, 1),
+            (codes::WORKTREE_DIRTY, 2),
+            (codes::CONFIG_UNREADABLE, 3),
+            (codes::LOCKED, 4),
+            (codes::CONFIG_WRITE_CONFLICT, 5),
+            (codes::INTERNAL, 6),
+        ];
+        for (code, exit_code) in cases {
+            let value = envelope(false, Value::Null, Vec::new(), vec![Diagnostic::new(code, "test").as_json()], 1, 0);
+            for key in ["ok", "tool_version", "data", "meta", "warnings", "commands", "errors"] {
+                assert!(value.get(key).is_some(), "missing {key}");
+            }
+            assert_eq!(value["data"], Value::Null);
+            assert_eq!(value["errors"][0]["exit_code"], exit_code);
+        }
     }
 }
