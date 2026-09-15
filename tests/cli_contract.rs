@@ -100,3 +100,24 @@ fn mutation_modes_refuse_without_the_declared_consent() {
         .unwrap()
         .contains("--yes"));
 }
+
+#[test]
+fn conformance_reports_sorted_cases_with_the_envelope_request_id() {
+    let output = run(&["conformance", "--json"]);
+    assert!(output.status.success());
+    let envelope = json(&output);
+    let cases = envelope["data"]["cases"].as_array().unwrap();
+    assert!(!cases.is_empty());
+    let ids = cases
+        .iter()
+        .map(|case| case["id"].as_str().unwrap())
+        .collect::<Vec<_>>();
+    let mut sorted = ids.clone();
+    sorted.sort();
+    assert_eq!(ids, sorted);
+    for case in cases {
+        assert_eq!(case["request_id"], envelope["meta"]["request_id"]);
+        assert!(case["target"].is_object());
+    }
+    assert_eq!(envelope["data"]["counts"]["fail"], 0);
+}

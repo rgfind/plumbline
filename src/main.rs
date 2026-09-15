@@ -72,6 +72,7 @@ fn main() -> ExitCode {
                 invocation.from_stdin,
                 invocation.config_path.as_deref(),
             ),
+            cli::Verb::Conformance => commands::cmd_conformance(),
             cli::Verb::RobotDocs => {
                 if invocation.robot_docs_guide { commands::cmd_robot_docs() }
                 else { Err(diagnostic::Diagnostic::new(diagnostic::codes::MISSING_REQUIRED, "robot-docs requires the `guide` section")) }
@@ -88,7 +89,7 @@ fn main() -> ExitCode {
                     cli::Verb::Release if !invocation.yes => Err(diagnostic::Diagnostic::new(diagnostic::codes::MISSING_REQUIRED, "release needs --yes")),
                     cli::Verb::Release => commands::cmd_release(&cfg),
                     cli::Verb::Capabilities => unreachable!(),
-                    cli::Verb::Schema | cli::Verb::Config | cli::Verb::RobotDocs => unreachable!(),
+                    cli::Verb::Schema | cli::Verb::Config | cli::Verb::Conformance | cli::Verb::RobotDocs => unreachable!(),
                 }
             }
         }

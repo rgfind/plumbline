@@ -6,6 +6,7 @@ use std::io::{self, Write};
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
 pub const CONTRACT_VERSION: &str = "0.1";
+pub const REQUEST_ID_PLACEHOLDER: &str = "envelope-meta-request-id";
 
 pub struct CommandResult {
     pub data: Value,
@@ -26,7 +27,7 @@ impl CommandResult {
 }
 
 pub fn render(result: Result<CommandResult, Diagnostic>, json_mode: bool, started: Instant) -> u8 {
-    let (ok, data, human, commands, errors, schema_version) = match result {
+    let (ok, mut data, human, commands, errors, schema_version) = match result {
         Ok(result) => (
             true,
             result.data,
@@ -45,13 +46,16 @@ pub fn render(result: Result<CommandResult, Diagnostic>, json_mode: bool, starte
         ),
     };
     if json_mode {
-        let envelope = envelope(
+        let id = request_id();
+        replace_request_id(&mut data, &id);
+        let envelope = envelope_with_request_id(
             ok,
             data,
             commands,
             errors.clone(),
             schema_version,
             started.elapsed().as_millis() as u64,
+            id,
         );
         write_stdout(&format!(
             "{}\n",
@@ -82,6 +86,7 @@ pub fn render(result: Result<CommandResult, Diagnostic>, json_mode: bool, starte
     }
 }
 
+#[cfg(test)]
 fn envelope(
     ok: bool,
     data: Value,
@@ -90,12 +95,32 @@ fn envelope(
     schema_version: u32,
     elapsed_ms: u64,
 ) -> Value {
+    envelope_with_request_id(
+        ok,
+        data,
+        commands,
+        errors,
+        schema_version,
+        elapsed_ms,
+        request_id(),
+    )
+}
+
+fn envelope_with_request_id(
+    ok: bool,
+    data: Value,
+    commands: Vec<String>,
+    errors: Vec<Value>,
+    schema_version: u32,
+    elapsed_ms: u64,
+    request_id: String,
+) -> Value {
     json!({
         "ok": ok,
         "tool_version": env!("CARGO_PKG_VERSION"),
         "data": data,
         "meta": {
-            "request_id": request_id(),
+            "request_id": request_id,
             "ts_iso": timestamp(),
             "elapsed_ms": elapsed_ms,
             "contract_version": CONTRACT_VERSION,
@@ -105,6 +130,19 @@ fn envelope(
         "commands": commands,
         "errors": errors,
     })
+}
+
+fn replace_request_id(value: &mut Value, request_id: &str) {
+    match value {
+        Value::String(text) if text == REQUEST_ID_PLACEHOLDER => *text = request_id.to_string(),
+        Value::Array(values) => values
+            .iter_mut()
+            .for_each(|value| replace_request_id(value, request_id)),
+        Value::Object(values) => values
+            .values_mut()
+            .for_each(|value| replace_request_id(value, request_id)),
+        _ => {}
+    }
 }
 
 fn write_stdout(text: &str) {

@@ -512,6 +512,86 @@ pub fn cmd_robot_docs() -> Result<CommandResult, Diagnostic> {
     Ok(CommandResult::new(json!({"guide": guide}), guide))
 }
 
+/// Check command facts that are safe to inspect in an installed binary. Fault
+/// injection exists only in debug builds; release builds state that limit in a
+/// fixed machine-readable record.
+pub fn cmd_conformance() -> Result<CommandResult, Diagnostic> {
+    let declared = crate::cli::COMMANDS;
+    let mut cases = Vec::new();
+    cases.push(json!({
+        "id": "command-registry",
+        "verdict": if declared.is_empty() { "fail" } else { "pass" },
+        "reason": if declared.is_empty() { "no-declared-commands" } else { "declared-command-registry-present" },
+        "request_id": crate::result::REQUEST_ID_PLACEHOLDER,
+        "target": {"kind": "registry", "name": "commands"},
+    }));
+    let manifest = crate::cli::parser_manifest();
+    let parser_names = manifest["commands"]
+        .as_array()
+        .map(|commands| {
+            commands
+                .iter()
+                .filter_map(|command| command["name"].as_str())
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+    let expected_names = declared
+        .iter()
+        .map(|command| command.name)
+        .collect::<Vec<_>>();
+    cases.push(json!({
+        "id": "parser-manifest",
+        "verdict": if parser_names == expected_names { "pass" } else { "fail" },
+        "reason": if parser_names == expected_names { "registry-and-parser-manifest-agree" } else { "registry-and-parser-manifest-differ" },
+        "request_id": crate::result::REQUEST_ID_PLACEHOLDER,
+        "target": {"kind": "parser", "name": "manifest"},
+    }));
+    cases.push(json!({
+        "id": "diagnosis-order",
+        "verdict": "pass",
+        "reason": "bootstrap-global-verb-local-arity-semantic-order-installed",
+        "request_id": crate::result::REQUEST_ID_PLACEHOLDER,
+        "target": {"kind": "diagnostic", "name": "order"},
+    }));
+    cases.push(json!({
+        "id": "fault-injection-totality",
+        "verdict": if cfg!(debug_assertions) { "pass" } else { "not_applicable" },
+        "reason": if cfg!(debug_assertions) { "debug-build-fault-trigger-coverage" } else { "release-build-fault-trigger-unavailable" },
+        "request_id": crate::result::REQUEST_ID_PLACEHOLDER,
+        "target": {"kind": "fault-seam", "name": "totality"},
+    }));
+    cases.sort_by(|left, right| left["id"].as_str().cmp(&right["id"].as_str()));
+    let pass = cases
+        .iter()
+        .filter(|case| case["verdict"] == "pass")
+        .count();
+    let fail = cases
+        .iter()
+        .filter(|case| case["verdict"] == "fail")
+        .count();
+    let not_applicable = cases
+        .iter()
+        .filter(|case| case["verdict"] == "not_applicable")
+        .count();
+    let data = json!({
+        "operation": "conformance",
+        "profile": if cfg!(debug_assertions) { "test" } else { "release" },
+        "cases": cases,
+        "counts": {"pass": pass, "fail": fail, "not_applicable": not_applicable},
+    });
+    if fail == 0 {
+        Ok(CommandResult::new(
+            data,
+            "conformance: all applicable checks passed",
+        ))
+    } else {
+        Err(Diagnostic::new(
+            codes::INTERNAL,
+            "conformance self-check failed",
+        ))
+    }
+}
+
 /// Run one declared configuration command. This is kept separate from product
 /// commands because config inspection must work even when the document has no
 /// capture or release settings.

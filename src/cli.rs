@@ -13,6 +13,7 @@ pub enum Verb {
     Capabilities,
     Schema,
     Config,
+    Conformance,
     RobotDocs,
 }
 
@@ -147,6 +148,13 @@ pub const COMMANDS: &[CommandSpec] = &[
         name: "config",
         summary: "inspect or safely change the selected configuration",
         flags: &["--yes", "--if-match", "--from-stdin"],
+        needs_config: false,
+    },
+    CommandSpec {
+        verb: Verb::Conformance,
+        name: "conformance",
+        summary: "run installed-command self checks",
+        flags: &[],
         needs_config: false,
     },
     CommandSpec {
