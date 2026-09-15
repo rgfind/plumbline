@@ -42,7 +42,42 @@ impl CommandRunner for SystemRunner {
 
 /// Run every check in order, then create and publish the tag. `preflight` is a
 /// closure because it is an in-process gate, not a child process.
-pub(crate) fn run<R, F>(cfg: &Config, runner: &mut R, preflight: F) -> Result<String, Diagnostic>
+#[derive(Debug)]
+pub(crate) struct ReleaseResult {
+    pub version: String,
+    pub tag: String,
+    pub commit: String,
+    pub remote: String,
+    pub remote_url: Option<String>,
+    pub already_complete: bool,
+}
+
+impl ReleaseResult {
+    pub fn human(&self) -> String {
+        if self.already_complete {
+            format!(
+                "release: {tag} from {commit} is already submitted to {remote}",
+                tag = self.tag,
+                commit = self.commit,
+                remote = self.remote,
+            )
+        } else {
+            format!(
+                "release: pushed {commit} and {tag} to {remote} ({url})",
+                commit = self.commit,
+                tag = self.tag,
+                remote = self.remote,
+                url = self.remote_url.as_deref().unwrap_or("unknown remote URL"),
+            )
+        }
+    }
+}
+
+pub(crate) fn run<R, F>(
+    cfg: &Config,
+    runner: &mut R,
+    preflight: F,
+) -> Result<ReleaseResult, Diagnostic>
 where
     R: CommandRunner,
     F: FnOnce() -> Result<(), Diagnostic>,
@@ -61,7 +96,17 @@ where
     let version = package_version(cfg, runner)?;
     ensure_changelog_entry(cfg, &version)?;
     let tag = format!("v{version}");
-    ensure_tag_absent(cfg, runner, &tag, &release.remote)?;
+    let state = release_state(cfg, runner, &tag, &release.remote, &release.branch)?;
+    if state.already_complete {
+        return Ok(ReleaseResult {
+            version,
+            tag,
+            commit: state.head,
+            remote: release.remote.clone(),
+            remote_url: None,
+            already_complete: true,
+        });
+    }
     let remote_url = remote_url(cfg, runner, &release.remote)?;
 
     preflight()?;
@@ -90,15 +135,14 @@ where
         "push branch and tag atomically",
     )?;
 
-    let commit = stdout(run_ok(
-        runner,
-        "git",
-        &strings(["rev-parse", "HEAD"]),
-        &cfg.root,
-        codes::GIT_UNAVAILABLE,
-        "read release commit",
-    )?);
-    Ok(format!("release: pushed {commit} and {tag} to {} ({remote_url})", release.remote))
+    Ok(ReleaseResult {
+        version,
+        tag,
+        commit: state.head,
+        remote: release.remote.clone(),
+        remote_url: Some(remote_url),
+        already_complete: false,
+    })
 }
 
 fn ensure_clean<R: CommandRunner>(cfg: &Config, runner: &mut R) -> Result<(), Diagnostic> {
@@ -234,12 +278,35 @@ fn ensure_changelog_entry(cfg: &Config, version: &str) -> Result<(), Diagnostic>
     }
 }
 
-fn ensure_tag_absent<R: CommandRunner>(
+struct ReleaseState {
+    head: String,
+    already_complete: bool,
+}
+
+struct TagState {
+    object: String,
+    target: String,
+    annotated: bool,
+}
+
+/// Read the immutable release state before a tag can be created. A retry is a
+/// no-op only when the local and remote annotated tags are identical and both
+/// the tag target and remote release branch point at the current commit.
+fn release_state<R: CommandRunner>(
     cfg: &Config,
     runner: &mut R,
     tag: &str,
     remote: &str,
-) -> Result<(), Diagnostic> {
+    branch: &str,
+) -> Result<ReleaseState, Diagnostic> {
+    let head = stdout(run_ok(
+        runner,
+        "git",
+        &strings(["rev-parse", "HEAD"]),
+        &cfg.root,
+        codes::GIT_UNAVAILABLE,
+        "read release commit",
+    )?);
     let local = invoke(
         runner,
         "git",
@@ -253,19 +320,17 @@ fn ensure_tag_absent<R: CommandRunner>(
         codes::GIT_UNAVAILABLE,
         "check local release tag",
     )?;
-    if local.success {
-        return Err(Diagnostic::new(
-            codes::TAG_EXISTS,
-            format!("tag `{tag}` already exists"),
-        ));
-    }
-    if local.code != Some(1) {
+    let local_tag = if local.success {
+        Some(local_tag_state(cfg, runner, tag)?)
+    } else if local.code == Some(1) {
+        None
+    } else {
         return Err(command_failed(
             codes::GIT_UNAVAILABLE,
             "check local release tag",
             &local,
         ));
-    }
+    };
 
     let remote_tag = format!("refs/tags/{tag}");
     let remote_out = invoke(
@@ -276,19 +341,147 @@ fn ensure_tag_absent<R: CommandRunner>(
         codes::REMOTE_UNAVAILABLE,
         "check remote release tag",
     )?;
-    if remote_out.success {
-        return Err(Diagnostic::new(
-            codes::TAG_EXISTS,
-            format!("tag `{tag}` already exists on remote `{remote}`"),
-        ));
-    }
-    if remote_out.code == Some(2) {
-        Ok(())
+    let remote_tag = if remote_out.success {
+        Some(remote_tag_state(cfg, runner, tag, remote)?)
+    } else if remote_out.code == Some(2) {
+        None
     } else {
         Err(command_failed(
             codes::REMOTE_UNAVAILABLE,
             "check remote release tag",
             &remote_out,
+        ))?
+    };
+
+    match (local_tag, remote_tag) {
+        (None, None) => Ok(ReleaseState { head, already_complete: false }),
+        (Some(_), None) | (None, Some(_)) => Err(Diagnostic::new(
+            codes::TAG_EXISTS,
+            format!(
+                "tag `{tag}` exists in only one release location; inspect with `git show {tag}` and `git ls-remote --tags {remote} refs/tags/{tag}`; no overwrite is available"
+            ),
+        )),
+        (Some(local), Some(remote_tag)) => {
+            let remote_branch = remote_branch_commit(cfg, runner, remote, branch)?;
+            if local.annotated
+                && remote_tag.annotated
+                && local.object == remote_tag.object
+                && local.target == head
+                && remote_tag.target == head
+                && remote_branch.as_deref() == Some(head.as_str())
+            {
+                Ok(ReleaseState { head, already_complete: true })
+            } else {
+                Err(Diagnostic::new(
+                    codes::RELEASE_STATE_CONFLICT,
+                    format!(
+                        "tag `{tag}` does not prove a completed submission from current commit `{head}`; inspect with `git show {tag}` and `git ls-remote --tags {remote} refs/tags/{tag}`; no overwrite is available"
+                    ),
+                ))
+            }
+        }
+    }
+}
+
+fn local_tag_state<R: CommandRunner>(
+    cfg: &Config,
+    runner: &mut R,
+    tag: &str,
+) -> Result<TagState, Diagnostic> {
+    let reference = format!("refs/tags/{tag}");
+    let object = stdout(run_ok(
+        runner,
+        "git",
+        &strings(["rev-parse", &reference]),
+        &cfg.root,
+        codes::GIT_UNAVAILABLE,
+        "read local release tag",
+    )?);
+    let kind = stdout(run_ok(
+        runner,
+        "git",
+        &strings(["cat-file", "-t", &reference]),
+        &cfg.root,
+        codes::GIT_UNAVAILABLE,
+        "inspect local release tag",
+    )?);
+    let target = stdout(run_ok(
+        runner,
+        "git",
+        &strings(["rev-list", "-n", "1", tag]),
+        &cfg.root,
+        codes::GIT_UNAVAILABLE,
+        "read local release tag target",
+    )?);
+    Ok(TagState {
+        object,
+        target,
+        annotated: kind == "tag",
+    })
+}
+
+fn remote_tag_state<R: CommandRunner>(
+    cfg: &Config,
+    runner: &mut R,
+    tag: &str,
+    remote: &str,
+) -> Result<TagState, Diagnostic> {
+    let reference = format!("refs/tags/{tag}");
+    let peeled = format!("{reference}^{{}}");
+    let out = run_ok(
+        runner,
+        "git",
+        &strings(["ls-remote", "--tags", remote, &reference, &peeled]),
+        &cfg.root,
+        codes::REMOTE_UNAVAILABLE,
+        "inspect remote release tag",
+    )?;
+    let mut object = None;
+    let mut target = None;
+    for line in stdout(out).lines() {
+        let Some((value, name)) = line.split_once('\t') else {
+            continue;
+        };
+        if name == reference {
+            object = Some(value.to_string());
+        } else if name == peeled {
+            target = Some(value.to_string());
+        }
+    }
+    match (object, target) {
+        (Some(object), Some(target)) => Ok(TagState { object, target, annotated: true }),
+        (Some(object), None) => Ok(TagState { object: object.clone(), target: object, annotated: false }),
+        (None, _) => Err(Diagnostic::new(
+            codes::RELEASE_STATE_CONFLICT,
+            format!("remote `{remote}` reported tag `{tag}` without a readable reference; no overwrite is available"),
+        )),
+    }
+}
+
+fn remote_branch_commit<R: CommandRunner>(
+    cfg: &Config,
+    runner: &mut R,
+    remote: &str,
+    branch: &str,
+) -> Result<Option<String>, Diagnostic> {
+    let reference = format!("refs/heads/{branch}");
+    let out = invoke(
+        runner,
+        "git",
+        &strings(["ls-remote", "--exit-code", remote, &reference]),
+        &cfg.root,
+        codes::REMOTE_UNAVAILABLE,
+        "read remote release branch",
+    )?;
+    if out.success {
+        Ok(stdout(out).split_whitespace().next().map(str::to_string))
+    } else if out.code == Some(2) {
+        Ok(None)
+    } else {
+        Err(command_failed(
+            codes::REMOTE_UNAVAILABLE,
+            "read remote release branch",
+            &out,
         ))
     }
 }
@@ -585,13 +778,13 @@ mod tests {
             ok("origin/main\n"),
             ok("0\t0\n"),
             ok(&metadata),
+            ok("0123456789abcdef\n"),
             failed(1),
             failed(2),
             ok("https://example.invalid/project.git\n"),
             ok(""),
             ok(""),
             ok(""),
-            ok("0123456789abcdef\n"),
         ]
     }
 
@@ -702,8 +895,7 @@ mod tests {
             ("dirty", 0, ok(" M src/main.rs\n"), codes::WORKTREE_DIRTY),
             ("branch", 1, failed(1), codes::RELEASE_BRANCH_MISMATCH),
             ("upstream", 2, failed(1), codes::UPSTREAM_NOT_SYNCED),
-            ("tag", 5, ok(""), codes::TAG_EXISTS),
-            ("dry-run", 8, failed(1), codes::PUBLISH_DRY_RUN_FAILED),
+            ("dry-run", 9, failed(1), codes::PUBLISH_DRY_RUN_FAILED),
         ];
         for (name, position, replacement, expected) in cases {
             let (cfg, mut replies) = prepared(name);
@@ -733,7 +925,7 @@ mod tests {
         assert!(!runner.local_tag_created);
 
         let (cfg, mut replies) = prepared("cargo-start");
-        replies[8] = Reply::StartError;
+        replies[9] = Reply::StartError;
         let mut runner = FakeRunner::new(replies);
         let error = run(&cfg, &mut runner, || Ok(())).unwrap_err();
         assert_eq!(error.code.name, codes::CARGO_UNAVAILABLE.name);
@@ -743,12 +935,84 @@ mod tests {
     #[test]
     fn failed_push_keeps_local_tag_and_never_records_remote_tag() {
         let (cfg, mut replies) = prepared("push-failure");
-        replies[10] = failed(1);
+        replies[11] = failed(1);
         let mut runner = FakeRunner::new(replies);
         let error = run(&cfg, &mut runner, || Ok(())).unwrap_err();
         assert_eq!(error.code.name, codes::PUSH_FAILED.name);
         assert!(runner.local_tag_created);
         assert!(!runner.remote_tag_created);
+    }
+
+    #[test]
+    fn completed_release_is_an_idempotent_no_op() {
+        let (cfg, mut replies) = prepared("completed-release");
+        let tag = "v1.2.3";
+        replies.truncate(6);
+        replies.extend([
+            ok(""),
+            ok("tag-object\n"),
+            ok("tag\n"),
+            ok("0123456789abcdef\n"),
+            ok("tag-object\trefs/tags/v1.2.3\n"),
+            ok("tag-object\trefs/tags/v1.2.3\n0123456789abcdef\trefs/tags/v1.2.3^{}\n"),
+            ok("0123456789abcdef\trefs/heads/main\n"),
+        ]);
+        let mut runner = FakeRunner::new(replies);
+        let result = run(&cfg, &mut runner, || {
+            panic!("a completed release must skip preflight")
+        })
+        .unwrap();
+
+        assert_eq!(result.tag, tag);
+        assert!(result.already_complete);
+        assert!(!runner.local_tag_created);
+        assert!(!runner.remote_tag_created);
+        assert!(!runner
+            .calls
+            .iter()
+            .any(|(_, args)| args.first().is_some_and(|arg| arg == "push")));
+    }
+
+    #[test]
+    fn local_only_release_tag_is_an_immutable_conflict() {
+        let (cfg, mut replies) = prepared("local-only-tag");
+        replies.truncate(6);
+        replies.extend([
+            ok(""),
+            ok("tag-object\n"),
+            ok("tag\n"),
+            ok("0123456789abcdef\n"),
+            failed(2),
+        ]);
+        let mut runner = FakeRunner::new(replies);
+        let error = run(&cfg, &mut runner, || Ok(())).unwrap_err();
+
+        assert_eq!(error.code.name, codes::TAG_EXISTS.name);
+        assert_eq!(error.exit(), 5);
+        assert!(error.message.contains("no overwrite is available"));
+        assert!(!runner.local_tag_created);
+        assert!(!runner.remote_tag_created);
+    }
+
+    #[test]
+    fn mismatched_remote_tag_target_is_an_immutable_conflict() {
+        let (cfg, mut replies) = prepared("mismatched-tag-target");
+        replies.truncate(6);
+        replies.extend([
+            ok(""),
+            ok("tag-object\n"),
+            ok("tag\n"),
+            ok("0123456789abcdef\n"),
+            ok("tag-object\trefs/tags/v1.2.3\n"),
+            ok("tag-object\trefs/tags/v1.2.3\nother-commit\trefs/tags/v1.2.3^{}\n"),
+            ok("0123456789abcdef\trefs/heads/main\n"),
+        ]);
+        let mut runner = FakeRunner::new(replies);
+        let error = run(&cfg, &mut runner, || Ok(())).unwrap_err();
+
+        assert_eq!(error.code.name, codes::RELEASE_STATE_CONFLICT.name);
+        assert_eq!(error.exit(), 5);
+        assert!(error.message.contains("no overwrite is available"));
     }
 
     #[test]
@@ -772,6 +1036,48 @@ mod tests {
             ],
         )
         .is_empty());
+    }
+
+    #[test]
+    fn real_completed_release_retry_is_a_no_op() {
+        let (cfg, _) = local_repository("real-completed-retry");
+        let mut first = LocalRunner {
+            cargo_replies: local_cargo_replies(&cfg),
+            fail_push: false,
+        };
+        run(&cfg, &mut first, || Ok(())).unwrap();
+
+        let mut retry = LocalRunner {
+            cargo_replies: local_cargo_replies(&cfg),
+            fail_push: false,
+        };
+        let result = run(&cfg, &mut retry, || {
+            panic!("a completed release retry must not run preflight")
+        })
+        .unwrap();
+
+        assert!(result.already_complete);
+        assert_eq!(result.commit, git(&cfg.root, &["rev-parse", "HEAD"]));
+    }
+
+    #[test]
+    fn real_remote_only_release_tag_is_a_conflict() {
+        let (cfg, _) = local_repository("real-remote-only-tag");
+        let mut first = LocalRunner {
+            cargo_replies: local_cargo_replies(&cfg),
+            fail_push: false,
+        };
+        run(&cfg, &mut first, || Ok(())).unwrap();
+        git(&cfg.root, &["tag", "-d", "v1.2.3"]);
+
+        let mut retry = LocalRunner {
+            cargo_replies: local_cargo_replies(&cfg),
+            fail_push: false,
+        };
+        let error = run(&cfg, &mut retry, || Ok(())).unwrap_err();
+
+        assert_eq!(error.code.name, codes::TAG_EXISTS.name);
+        assert_eq!(error.exit(), 5);
     }
 
     #[test]

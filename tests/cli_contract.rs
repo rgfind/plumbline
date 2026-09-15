@@ -21,7 +21,15 @@ fn json_success_uses_the_universal_envelope() {
     assert!(output.stderr.is_empty());
     let envelope = json(&output);
     assert_eq!(envelope["ok"], true);
-    for key in ["ok", "tool_version", "data", "meta", "warnings", "commands", "errors"] {
+    for key in [
+        "ok",
+        "tool_version",
+        "data",
+        "meta",
+        "warnings",
+        "commands",
+        "errors",
+    ] {
         assert!(envelope.get(key).is_some(), "missing `{key}`");
     }
     assert_eq!(envelope["meta"]["contract_version"], "0.1");
@@ -65,4 +73,30 @@ fn schema_and_robot_docs_are_registry_backed() {
     let text = json(&guide)["data"]["guide"].as_str().unwrap().to_string();
     assert!(text.contains("capabilities"));
     assert!(text.contains("robot-docs"));
+}
+
+#[test]
+fn mutation_modes_refuse_without_the_declared_consent() {
+    let capture = run(&["capture", "--json"]);
+    assert_eq!(capture.status.code(), Some(1));
+    let capture_json = json(&capture);
+    assert_eq!(capture_json["errors"][0]["code"], "MISSING_REQUIRED");
+    let message = capture_json["errors"][0]["message"].as_str().unwrap();
+    assert!(message.contains("capture --check"));
+    assert!(message.contains("capture --yes"));
+
+    let selector_conflict = run(&["capture", "--check", "--yes", "--json"]);
+    assert_eq!(selector_conflict.status.code(), Some(1));
+    assert_eq!(
+        json(&selector_conflict)["errors"][0]["code"],
+        "INVALID_INPUT"
+    );
+
+    let release = run(&["release", "--json"]);
+    assert_eq!(release.status.code(), Some(1));
+    assert_eq!(json(&release)["errors"][0]["code"], "MISSING_REQUIRED");
+    assert!(json(&release)["errors"][0]["message"]
+        .as_str()
+        .unwrap()
+        .contains("--yes"));
 }

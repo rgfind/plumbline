@@ -181,7 +181,7 @@ pub mod codes {
         RELEASE_BRANCH_MISMATCH: Gate = "HEAD is detached or is not on the configured release branch",
         UPSTREAM_NOT_SYNCED: Gate = "the configured release branch is ahead of or behind its upstream",
         CHANGELOG_VERSION_MISSING: Gate = "CHANGELOG.md has no accepted H2 heading for the package version",
-        TAG_EXISTS: Gate = "the release tag already exists locally or on the configured remote",
+        TAG_EXISTS: Conflict = "the release tag already exists locally or on the configured remote",
         PUBLISH_DRY_RUN_FAILED: Gate = "cargo publish --dry-run --locked failed",
     }
 }

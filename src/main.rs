@@ -28,8 +28,8 @@
 //! root; every relative path in the config resolves there, so `plumb` is invoked
 //! by name inside a repo, like `br`. plumbline itself stays generic.
 
-mod commands;
 mod cli;
+mod commands;
 mod config;
 mod diagnostic;
 mod engine;
@@ -46,7 +46,14 @@ fn main() -> ExitCode {
     let started = Instant::now();
     let args: Vec<String> = std::env::args().skip(1).collect();
     let parsed = cli::parse(&args);
-    let json_mode = parsed.as_ref().map(|invocation| invocation.json).unwrap_or_else(|_| args.iter().take_while(|arg| arg.as_str() != "--").any(|arg| arg == "--json"));
+    let json_mode = parsed
+        .as_ref()
+        .map(|invocation| invocation.json)
+        .unwrap_or_else(|_| {
+            args.iter()
+                .take_while(|arg| arg.as_str() != "--")
+                .any(|arg| arg == "--json")
+        });
     let operation = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| parsed.and_then(|invocation| {
         if invocation.version {
             return Ok(result::CommandResult::new(serde_json::json!({"version": env!("CARGO_PKG_VERSION"), "contract_version": result::CONTRACT_VERSION}), format!("plumb {}", env!("CARGO_PKG_VERSION"))));
@@ -66,8 +73,11 @@ fn main() -> ExitCode {
                 let cfg = Config::load(&invocation.config_path, root)?;
                 match verb {
                     cli::Verb::Check => commands::cmd_check(&cfg),
+                    cli::Verb::Capture if invocation.capture_check && invocation.yes => Err(diagnostic::Diagnostic::new(diagnostic::codes::INVALID_INPUT, "capture accepts exactly one mode: --check or --yes")),
+                    cli::Verb::Capture if !invocation.capture_check && !invocation.yes => Err(diagnostic::Diagnostic::new(diagnostic::codes::MISSING_REQUIRED, "capture needs exactly one mode: `plumb capture --check` or `plumb capture --yes`")),
                     cli::Verb::Capture => commands::cmd_capture(&cfg, invocation.capture_check),
                     cli::Verb::Preflight => commands::cmd_preflight(&cfg),
+                    cli::Verb::Release if !invocation.yes => Err(diagnostic::Diagnostic::new(diagnostic::codes::MISSING_REQUIRED, "release needs --yes")),
                     cli::Verb::Release => commands::cmd_release(&cfg),
                     cli::Verb::Capabilities => unreachable!(),
                     cli::Verb::Schema | cli::Verb::RobotDocs => unreachable!(),

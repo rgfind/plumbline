@@ -22,9 +22,9 @@ fn config_file(name: &str, text: &str) -> PathBuf {
 fn release_with_config(path: &PathBuf, config_after_verb: bool) -> std::process::Output {
     let mut command = Command::new(env!("CARGO_BIN_EXE_plumb"));
     if config_after_verb {
-        command.args(["release", "--config", path.to_str().unwrap()]);
+        command.args(["release", "--yes", "--config", path.to_str().unwrap()]);
     } else {
-        command.args(["--config", path.to_str().unwrap(), "release"]);
+        command.args(["--config", path.to_str().unwrap(), "release", "--yes"]);
     }
     command.output().expect("run plumb release")
 }

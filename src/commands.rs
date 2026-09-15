@@ -127,8 +127,7 @@ pub fn cmd_capture(cfg: &Config, check_only: bool) -> Result<CommandResult, Diag
     let mut text = serde_json::to_string_pretty(&captured)
         .map_err(|e| Diagnostic::new(codes::WRITE_FAILED, format!("serialize fixture: {e}")))?;
     text.push('\n');
-    std::fs::write(&fixture_path, text)
-        .map_err(|e| Diagnostic::new(codes::WRITE_FAILED, format!("write {fixture}: {e}")))?;
+    atomic_write(&fixture_path, &text, fixture)?;
     let mut human = vec![format!("plumbline: rewrote {fixture} from a fresh capture")];
     let mut blocks = Vec::new();
 
@@ -145,12 +144,16 @@ pub fn cmd_capture(cfg: &Config, check_only: bool) -> Result<CommandResult, Diag
         let updated = replace_generated(&doc, &gen.id, &block)
             .map_err(|e| Diagnostic::new(codes::MARKER_MISSING, e))?;
         if updated != doc {
-            std::fs::write(&surface_path, updated).map_err(|e| {
-                Diagnostic::new(codes::WRITE_FAILED, format!("write {}: {e}", gen.surface))
-            })?;
-            human.push(format!("plumbline: regenerated `{}` in {}", gen.id, gen.surface));
+            atomic_write(&surface_path, &updated, &gen.surface)?;
+            human.push(format!(
+                "plumbline: regenerated `{}` in {}",
+                gen.id, gen.surface
+            ));
         } else {
-            human.push(format!("plumbline: `{}` in {} already current", gen.id, gen.surface));
+            human.push(format!(
+                "plumbline: `{}` in {} already current",
+                gen.id, gen.surface
+            ));
         }
         blocks.push(gen.id.clone());
     }
@@ -159,6 +162,29 @@ pub fn cmd_capture(cfg: &Config, check_only: bool) -> Result<CommandResult, Diag
         json!({"operation": "capture", "mode": "write", "fixture_path": fixture, "generated_blocks": blocks, "status": "updated"}),
         human.join("\n"),
     ))
+}
+
+/// Write a sibling file, persist it, and rename it over the destination. A
+/// capture never leaves a truncated fixture or generated document behind.
+fn atomic_write(path: &Path, text: &str, display: &str) -> Result<(), Diagnostic> {
+    use std::io::Write;
+    let name = path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or("plumbline");
+    let temp = path.with_file_name(format!(".{name}.plumb-{}.tmp", std::process::id()));
+    let mut file = std::fs::File::create(&temp).map_err(|e| {
+        Diagnostic::new(
+            codes::WRITE_FAILED,
+            format!("create temporary file for {display}: {e}"),
+        )
+    })?;
+    file.write_all(text.as_bytes())
+        .map_err(|e| Diagnostic::new(codes::WRITE_FAILED, format!("write {display}: {e}")))?;
+    file.sync_all()
+        .map_err(|e| Diagnostic::new(codes::WRITE_FAILED, format!("sync {display}: {e}")))?;
+    std::fs::rename(&temp, path)
+        .map_err(|e| Diagnostic::new(codes::WRITE_FAILED, format!("replace {display}: {e}")))
 }
 
 /// Both `capture` verbs and the fixture-freshness gate need a declared capture
@@ -202,7 +228,9 @@ pub fn cmd_preflight(cfg: &Config) -> Result<CommandResult, Diagnostic> {
         .and_then(|c| c.command.first())
         .cloned()
         .unwrap_or_else(|| "the crate".into());
-    let mut human = vec![format!("preflight: publish gate for `{name}` (crates.io is write-once)")];
+    let mut human = vec![format!(
+        "preflight: publish gate for `{name}` (crates.io is write-once)"
+    )];
 
     // Build the gate list. Gates 1, 3 and 4 apply to every crate. Gate 2
     // (fixture freshness) is present only when the crate declares a contract to
@@ -260,7 +288,10 @@ pub fn cmd_preflight(cfg: &Config) -> Result<CommandResult, Diagnostic> {
 
     if failures == 0 {
         human.push("preflight: OK — every gate passed; safe to `cargo publish`".into());
-        Ok(CommandResult::new(json!({"operation": "preflight", "status": "passed"}), human.join("\n")))
+        Ok(CommandResult::new(
+            json!({"operation": "preflight", "status": "passed"}),
+            human.join("\n"),
+        ))
     } else {
         Err(Diagnostic::new(
             codes::PREFLIGHT_FAILED,
@@ -274,8 +305,25 @@ pub fn cmd_preflight(cfg: &Config) -> Result<CommandResult, Diagnostic> {
 /// same complete gate report as the standalone command.
 pub fn cmd_release(cfg: &Config) -> Result<CommandResult, Diagnostic> {
     let mut runner = release::SystemRunner;
-    let message = release::run(cfg, &mut runner, || cmd_preflight(cfg).map(|_| ()))?;
-    Ok(CommandResult::new(json!({"operation": "release", "status": "submitted"}), message))
+    let release = release::run(cfg, &mut runner, || cmd_preflight(cfg).map(|_| ()))?;
+    let status = if release.already_complete {
+        "already_complete"
+    } else {
+        "submitted"
+    };
+    Ok(CommandResult::new(
+        json!({
+            "operation": "release",
+            "status": status,
+            "version": release.version,
+            "tag": release.tag,
+            "commit": release.commit,
+            "remote": release.remote,
+            "remote_url": release.remote_url,
+            "already_complete": release.already_complete,
+        }),
+        release.human(),
+    ))
 }
 
 /// Gate: the git worktree has no uncommitted changes. `cargo publish` packages
@@ -419,7 +467,10 @@ pub fn cmd_capabilities() -> Result<CommandResult, Diagnostic> {
         "error_codes": Value::Object(error_codes),
         "warning_codes": [],
     });
-    Ok(CommandResult::new(data, "plumb capabilities: use --json for the full contract"))
+    Ok(CommandResult::new(
+        data,
+        "plumb capabilities: use --json for the full contract",
+    ))
 }
 
 pub fn cmd_schema(command: Option<&str>) -> Result<CommandResult, Diagnostic> {
@@ -429,7 +480,9 @@ pub fn cmd_schema(command: Option<&str>) -> Result<CommandResult, Diagnostic> {
             return Err(Diagnostic::new(codes::INVALID_INPUT, format!("unknown command schema `{command}`; valid commands are check, capture, preflight, release, capabilities, schema, and robot-docs")));
         }
     }
-    let selected = command.map(|name| json!({name: verbs[name].clone()})).unwrap_or(verbs);
+    let selected = command
+        .map(|name| json!({name: verbs[name].clone()}))
+        .unwrap_or(verbs);
     Ok(CommandResult::new(
         json!({
             "envelope_schema": {"type":"object", "required":["ok","tool_version","data","meta","warnings","commands","errors"]},
@@ -441,7 +494,11 @@ pub fn cmd_schema(command: Option<&str>) -> Result<CommandResult, Diagnostic> {
 }
 
 pub fn cmd_robot_docs() -> Result<CommandResult, Diagnostic> {
-    let names = crate::cli::COMMANDS.iter().map(|spec| spec.name).collect::<Vec<_>>().join(", ");
+    let names = crate::cli::COMMANDS
+        .iter()
+        .map(|spec| spec.name)
+        .collect::<Vec<_>>()
+        .join(", ");
     let guide = format!("# plumb agent guide\n\n1. Run `plumb capabilities --json` to discover commands.\n2. Run `plumb check` before a capture.\n3. Use `plumb capture --check` to compare fresh output.\n4. Read `plumb preflight --json` gate results before release.\n5. Use `plumb release --dry-run` when it is available.\n6. Branch on the declared exit code.\n7. Run `plumb conformance --json` when it is available.\n\nDeclared commands: {names}.");
     Ok(CommandResult::new(json!({"guide": guide}), guide))
 }

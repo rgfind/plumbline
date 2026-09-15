@@ -16,25 +16,55 @@ pub struct CommandResult {
 
 impl CommandResult {
     pub fn new(data: Value, human: impl Into<String>) -> Self {
-        Self { data, human: human.into(), commands: Vec::new(), schema_version: 1 }
+        Self {
+            data,
+            human: human.into(),
+            commands: Vec::new(),
+            schema_version: 1,
+        }
     }
 }
 
-pub fn render(
-    result: Result<CommandResult, Diagnostic>,
-    json_mode: bool,
-    started: Instant,
-) -> u8 {
+pub fn render(result: Result<CommandResult, Diagnostic>, json_mode: bool, started: Instant) -> u8 {
     let (ok, data, human, commands, errors, schema_version) = match result {
-        Ok(result) => (true, result.data, result.human, result.commands, Vec::new(), result.schema_version),
-        Err(error) => (false, Value::Null, String::new(), Vec::new(), vec![error.as_json()], 1),
+        Ok(result) => (
+            true,
+            result.data,
+            result.human,
+            result.commands,
+            Vec::new(),
+            result.schema_version,
+        ),
+        Err(error) => (
+            false,
+            Value::Null,
+            String::new(),
+            Vec::new(),
+            vec![error.as_json()],
+            1,
+        ),
     };
     if json_mode {
-        let envelope = envelope(ok, data, commands, errors.clone(), schema_version, started.elapsed().as_millis() as u64);
-        write_stdout(&format!("{}\n", serde_json::to_string(&envelope).expect("serialize envelope")));
+        let envelope = envelope(
+            ok,
+            data,
+            commands,
+            errors.clone(),
+            schema_version,
+            started.elapsed().as_millis() as u64,
+        );
+        write_stdout(&format!(
+            "{}\n",
+            serde_json::to_string(&envelope).expect("serialize envelope")
+        ));
         if !ok {
             let error = &errors[0];
-            let _ = writeln!(io::stderr(), "plumb: [{}] {}", error["code"].as_str().unwrap_or("INTERNAL"), error["message"].as_str().unwrap_or("command failed"));
+            let _ = writeln!(
+                io::stderr(),
+                "plumb: [{}] {}",
+                error["code"].as_str().unwrap_or("INTERNAL"),
+                error["message"].as_str().unwrap_or("command failed")
+            );
         }
     } else if ok {
         if !human.is_empty() {
@@ -45,7 +75,11 @@ pub fn render(
         let code = error["code"].as_str().unwrap_or("INTERNAL");
         let _ = writeln!(io::stderr(), "plumb: [{code}] {message}");
     }
-    if ok { 0 } else { errors[0]["exit_code"].as_u64().unwrap_or(6) as u8 }
+    if ok {
+        0
+    } else {
+        errors[0]["exit_code"].as_u64().unwrap_or(6) as u8
+    }
 }
 
 fn envelope(
@@ -78,15 +112,24 @@ fn write_stdout(text: &str) {
 }
 
 fn request_id() -> String {
-    let nanos = SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_nanos()).unwrap_or(0);
+    let nanos = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_nanos())
+        .unwrap_or(0);
     format!("req-{:x}-{:x}", std::process::id(), nanos)
 }
 
 fn timestamp() -> String {
     // `SOURCE_DATE_EPOCH` permits deterministic fixtures.
-    let seconds = std::env::var("SOURCE_DATE_EPOCH").ok().and_then(|v| v.parse::<u64>().ok()).unwrap_or_else(|| {
-        SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0)
-    });
+    let seconds = std::env::var("SOURCE_DATE_EPOCH")
+        .ok()
+        .and_then(|v| v.parse::<u64>().ok())
+        .unwrap_or_else(|| {
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .map(|d| d.as_secs())
+                .unwrap_or(0)
+        });
     unix_seconds_to_rfc3339(seconds)
 }
 
@@ -106,7 +149,12 @@ fn unix_seconds_to_rfc3339(seconds: u64) -> String {
     let day = doy - (153 * mp + 2) / 5 + 1;
     let month = mp + if mp < 10 { 3 } else { -9 };
     year += if month <= 2 { 1 } else { 0 };
-    format!("{year:04}-{month:02}-{day:02}T{:02}:{:02}:{:02}Z", day_seconds / 3_600, (day_seconds % 3_600) / 60, day_seconds % 60)
+    format!(
+        "{year:04}-{month:02}-{day:02}T{:02}:{:02}:{:02}Z",
+        day_seconds / 3_600,
+        (day_seconds % 3_600) / 60,
+        day_seconds % 60
+    )
 }
 
 #[cfg(test)]
@@ -122,7 +170,14 @@ mod tests {
 
     #[test]
     fn pins_all_exit_class_envelope_shapes() {
-        let success = envelope(true, json!({"status": "passed"}), Vec::new(), Vec::new(), 1, 0);
+        let success = envelope(
+            true,
+            json!({"status": "passed"}),
+            Vec::new(),
+            Vec::new(),
+            1,
+            0,
+        );
         assert_eq!(success["ok"], true);
         assert_eq!(success["errors"], json!([]));
 
@@ -135,8 +190,23 @@ mod tests {
             (codes::INTERNAL, 6),
         ];
         for (code, exit_code) in cases {
-            let value = envelope(false, Value::Null, Vec::new(), vec![Diagnostic::new(code, "test").as_json()], 1, 0);
-            for key in ["ok", "tool_version", "data", "meta", "warnings", "commands", "errors"] {
+            let value = envelope(
+                false,
+                Value::Null,
+                Vec::new(),
+                vec![Diagnostic::new(code, "test").as_json()],
+                1,
+                0,
+            );
+            for key in [
+                "ok",
+                "tool_version",
+                "data",
+                "meta",
+                "warnings",
+                "commands",
+                "errors",
+            ] {
                 assert!(value.get(key).is_some(), "missing {key}");
             }
             assert_eq!(value["data"], Value::Null);
