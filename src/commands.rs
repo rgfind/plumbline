@@ -210,13 +210,7 @@ fn fixture_matches_binary(cfg: &Config) -> Result<(), Diagnostic> {
     if normalized(&captured, &cfg.normalize_meta) == normalized(&committed, &cfg.normalize_meta) {
         Ok(())
     } else {
-        Err(Diagnostic::new(
-            codes::FIXTURE_STALE,
-            format!(
-                "committed fixture {fixture} is STALE: a fresh capture differs. \
-                 Run `plumb capture` and reconcile the docs."
-            ),
-        ))
+        Err(Diagnostic::new(codes::FIXTURE_STALE, format!("committed fixture {fixture} is STALE; run `plumb capture --yes` to reconcile docs.")).with_data(json!({"diff": json_diff(&committed, &captured)})))
     }
 }
 
@@ -394,15 +388,44 @@ fn generated_blocks_fresh(cfg: &Config) -> Result<String, Diagnostic> {
             return Err(Diagnostic::new(
                 codes::BLOCK_STALE,
                 format!(
-                    "`{}` in {} is STALE; run `plumb capture` to regenerate it.\n\
-                     --- committed ---\n{committed}\n--- fresh ---\n{fresh}",
+                    "`{}` in {} is STALE; run `plumb capture --yes` to regenerate it.",
                     gen.id, gen.surface
                 ),
-            ));
+            )
+            .with_data(json!({"diff": line_diff(&committed, &fresh)})));
         }
         checked += 1;
     }
     Ok(format!("{checked} block(s) equal a fresh run"))
+}
+
+fn json_diff(old: &Value, new: &Value) -> Vec<Value> {
+    let mut records = Vec::new();
+    collect_json_diff("", old, new, &mut records);
+    cap_diff(records)
+}
+
+fn collect_json_diff(locator: &str, old: &Value, new: &Value, records: &mut Vec<Value>) {
+    match (old, new) {
+        (Value::Object(old), Value::Object(new)) => {
+            let mut names = old.keys().chain(new.keys()).cloned().collect::<Vec<_>>(); names.sort(); names.dedup();
+            for key in names { let child = format!("{}/{}", locator, key.replace('~', "~0").replace('/', "~1")); match (old.get(&key), new.get(&key)) { (Some(old), Some(new)) => collect_json_diff(&child, old, new, records), (Some(old), None) => records.push(json!({"locator": child, "location_kind":"json-pointer", "change_kind":"removed", "old":old})), (None, Some(new)) => records.push(json!({"locator": child, "location_kind":"json-pointer", "change_kind":"added", "new":new})), _=>{} } }
+        }
+        _ if old != new => records.push(json!({"locator": if locator.is_empty() { "/" } else { locator }, "location_kind":"json-pointer", "change_kind": if std::mem::discriminant(old) == std::mem::discriminant(new) { "changed" } else { "type-changed" }, "old":old, "new":new})),
+        _ => {}
+    }
+}
+
+fn line_diff(old: &str, new: &str) -> Vec<Value> {
+    let old = old.lines().collect::<Vec<_>>();
+    let new = new.lines().collect::<Vec<_>>();
+    cap_diff((0..old.len().max(new.len())).filter_map(|index| match (old.get(index), new.get(index)) { (Some(old), Some(new)) if old != new => Some(json!({"locator":format!("line:{}", index+1),"location_kind":"line","change_kind":"changed","old":old,"new":new})), (Some(old),None)=>Some(json!({"locator":format!("line:{}",index+1),"location_kind":"line","change_kind":"removed","old":old})), (None,Some(new))=>Some(json!({"locator":format!("line:{}",index+1),"location_kind":"line","change_kind":"added","new":new})), _=>None }).collect())
+}
+
+fn cap_diff(mut records: Vec<Value>) -> Vec<Value> {
+    records.sort_by(|left, right| left["locator"].as_str().cmp(&right["locator"].as_str()));
+    records.truncate(50);
+    records
 }
 
 // ---- capabilities ----------------------------------------------------------
