@@ -809,10 +809,10 @@
   "errors": [],
   "meta": {
     "contract_version": "0.1",
-    "elapsed_ms": 0,
-    "request_id": "req-c2de-18d58fe097602cc8",
+    "elapsed_ms": 1,
+    "request_id": "req-c760-18d58fe509ab1938",
     "schema_version": 1,
-    "ts_iso": "2026-09-15T17:50:21Z"
+    "ts_iso": "2026-09-15T17:50:40Z"
   },
   "ok": true,
   "tool_version": "0.0.3",
