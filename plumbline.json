@@ -4,7 +4,7 @@
     "command": ["plumb", "capabilities", "--json"]
   },
   "fixture": "tests/fixtures/contract/capabilities.pl.json",
-  "normalize_meta": ["request_id", "elapsed_ms"],
+  "normalize_meta": ["request_id", "elapsed_ms", "ts_iso"],
   "surfaces": ["README.md"],
   "package_allowlist": "cargo-include",
   "release": {"branch": "main", "remote": "origin"},
