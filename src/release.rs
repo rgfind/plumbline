@@ -145,6 +145,40 @@ where
     })
 }
 
+pub(crate) fn run_dry<R, F>(
+    cfg: &Config,
+    runner: &mut R,
+    preflight: F,
+) -> Result<ReleaseResult, Diagnostic>
+where
+    R: CommandRunner,
+    F: FnOnce() -> Result<(), Diagnostic>,
+{
+    let release = cfg.release.as_ref().ok_or_else(|| {
+        Diagnostic::new(
+            codes::RELEASE_CONFIG_MISSING,
+            "release needs a `release` object with `branch` and `remote` settings",
+        )
+    })?;
+    ensure_clean(cfg, runner)?;
+    ensure_branch(cfg, runner, &release.branch)?;
+    ensure_upstream_synced(cfg, runner)?;
+    let version = package_version(cfg, runner)?;
+    ensure_changelog_entry(cfg, &version)?;
+    let tag = format!("v{version}");
+    let state = release_state(cfg, runner, &tag, &release.remote, &release.branch)?;
+    preflight()?;
+    dry_run_publish(cfg, runner)?;
+    Ok(ReleaseResult {
+        version,
+        tag,
+        commit: state.head,
+        remote: release.remote.clone(),
+        remote_url: None,
+        already_complete: state.already_complete,
+    })
+}
+
 fn ensure_clean<R: CommandRunner>(cfg: &Config, runner: &mut R) -> Result<(), Diagnostic> {
     let out = run_ok(
         runner,

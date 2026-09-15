@@ -321,6 +321,15 @@ pub fn cmd_release(cfg: &Config) -> Result<CommandResult, Diagnostic> {
     ))
 }
 
+pub fn cmd_release_dry_run(cfg: &Config) -> Result<CommandResult, Diagnostic> {
+    let mut runner = release::SystemRunner;
+    let release = release::run_dry(cfg, &mut runner, || cmd_preflight(cfg).map(|_| ()))?;
+    Ok(CommandResult::new(
+        json!({"operation":"release","mode":"dry-run","status":"passed","version":release.version,"tag":release.tag,"commit":release.commit,"remote":release.remote,"completed_state_changes":[],"skipped_state_changes":[{"id":"create-annotated-tag","reason":"dry-run"},{"id":"atomic-push","reason":"dry-run"}]}),
+        "release dry-run: checks passed; no tag or push was performed",
+    ))
+}
+
 /// Gate: the git worktree has no uncommitted changes. `cargo publish` packages
 /// the working tree, so an untidy tree could ship un-reviewed files.
 fn gate_worktree_clean(cfg: &Config) -> Result<String, Diagnostic> {

@@ -126,7 +126,7 @@ pub const COMMANDS: &[CommandSpec] = &[
         verb: Verb::Release,
         name: "release",
         summary: "validate, tag, and atomically push",
-        flags: &["--yes"],
+        flags: &["--yes", "--dry-run"],
         needs_config: true,
     },
     CommandSpec {
@@ -190,6 +190,7 @@ pub struct Invocation {
     pub config_arguments: Vec<String>,
     pub if_match: Option<String>,
     pub from_stdin: bool,
+    pub dry_run: bool,
 }
 
 pub fn parse(args: &[String]) -> Result<Invocation, Diagnostic> {
@@ -208,6 +209,7 @@ pub fn parse(args: &[String]) -> Result<Invocation, Diagnostic> {
     let mut config_arguments = Vec::new();
     let mut if_match = None;
     let mut from_stdin = false;
+    let mut dry_run = false;
     let mut raw = false;
     let mut i = 0;
 
@@ -294,6 +296,14 @@ pub fn parse(args: &[String]) -> Result<Invocation, Diagnostic> {
                 ));
             }
             from_stdin = true;
+        } else if token == "--dry-run" {
+            if verb != Some(Verb::Release) || dry_run {
+                return Err(Diagnostic::new(
+                    codes::UNKNOWN_FLAG,
+                    "--dry-run is declared only once for release",
+                ));
+            }
+            dry_run = true;
         } else if token.starts_with('-') {
             return Err(Diagnostic::new(
                 codes::UNKNOWN_FLAG,
@@ -347,6 +357,7 @@ pub fn parse(args: &[String]) -> Result<Invocation, Diagnostic> {
         config_arguments,
         if_match,
         from_stdin,
+        dry_run,
     })
 }
 
