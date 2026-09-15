@@ -2,3 +2,5 @@
 # issue_prefix: pl
 # default_priority: 2
 # default_type: task
+inherited_context:
+  enabled: true
