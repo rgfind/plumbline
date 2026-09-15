@@ -233,7 +233,7 @@ pub fn cmd_preflight(cfg: &Config) -> Result<CommandResult, Diagnostic> {
         (
             "fixture-fresh",
             "committed fixture matches binary",
-            (!cfg.capture.is_some() || !cfg.fixture.is_some())
+            (cfg.capture.is_none() || cfg.fixture.is_none())
                 .then_some("no-capture-fixture-contract"),
             Box::new(|| {
                 fixture_matches_binary(cfg).map(|_| "fresh capture matches fixture".into())
@@ -401,7 +401,7 @@ fn generated_blocks_fresh(cfg: &Config) -> Result<String, Diagnostic> {
                     gen.id, gen.surface
                 ),
             )
-            .with_data(json!({"diff": line_diff(&committed, &fresh)})));
+            .with_data(json!({"diff": line_diff(committed, &fresh)})));
         }
         checked += 1;
     }

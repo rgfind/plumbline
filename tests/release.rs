@@ -1,7 +1,7 @@
 //! Input grammar tests for the release command.
 
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::Command;
 
 fn config_file(name: &str, text: &str) -> PathBuf {
@@ -19,7 +19,7 @@ fn config_file(name: &str, text: &str) -> PathBuf {
     path
 }
 
-fn release_with_config(path: &PathBuf, config_after_verb: bool) -> std::process::Output {
+fn release_with_config(path: &Path, config_after_verb: bool) -> std::process::Output {
     let mut command = Command::new(env!("CARGO_BIN_EXE_plumb"));
     if config_after_verb {
         command.args(["release", "--yes", "--config", path.to_str().unwrap()]);
