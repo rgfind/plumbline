@@ -34,7 +34,7 @@ fn release_accepts_config_before_or_after_the_verb() {
     let path = config_file("missing", r#"{"surfaces":[]}"#);
     for config_after_verb in [false, true] {
         let output = release_with_config(&path, config_after_verb);
-        assert_eq!(output.status.code(), Some(1));
+        assert_eq!(output.status.code(), Some(3));
         assert!(String::from_utf8_lossy(&output.stderr).contains("RELEASE_CONFIG_MISSING"));
     }
 }
@@ -47,7 +47,7 @@ fn release_rejects_nonobject_and_empty_release_settings() {
     ] {
         let path = config_file(name, config);
         let output = release_with_config(&path, false);
-        assert_eq!(output.status.code(), Some(1));
+        assert_eq!(output.status.code(), Some(3));
         assert!(String::from_utf8_lossy(&output.stderr).contains("CONFIG_SCHEMA"));
     }
 }

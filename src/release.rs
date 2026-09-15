@@ -42,7 +42,7 @@ impl CommandRunner for SystemRunner {
 
 /// Run every check in order, then create and publish the tag. `preflight` is a
 /// closure because it is an in-process gate, not a child process.
-pub(crate) fn run<R, F>(cfg: &Config, runner: &mut R, preflight: F) -> Result<(), Diagnostic>
+pub(crate) fn run<R, F>(cfg: &Config, runner: &mut R, preflight: F) -> Result<String, Diagnostic>
 where
     R: CommandRunner,
     F: FnOnce() -> Result<(), Diagnostic>,
@@ -98,11 +98,7 @@ where
         codes::GIT_UNAVAILABLE,
         "read release commit",
     )?);
-    println!(
-        "release: pushed {commit} and {tag} to {} ({remote_url})",
-        release.remote
-    );
-    Ok(())
+    Ok(format!("release: pushed {commit} and {tag} to {} ({remote_url})", release.remote))
 }
 
 fn ensure_clean<R: CommandRunner>(cfg: &Config, runner: &mut R) -> Result<(), Diagnostic> {

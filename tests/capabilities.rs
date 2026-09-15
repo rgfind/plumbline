@@ -11,7 +11,7 @@ use std::process::Command;
 
 fn capabilities() -> Value {
     let out = Command::new(env!("CARGO_BIN_EXE_plumb"))
-        .arg("capabilities")
+        .args(["capabilities", "--json"])
         .output()
         .expect("run plumb capabilities");
     assert!(
@@ -24,10 +24,10 @@ fn capabilities() -> Value {
 }
 
 #[test]
-fn envelope_is_ok_with_one_data_row() {
+fn envelope_is_ok_with_a_data_object() {
     let env = capabilities();
     assert_eq!(env["ok"], Value::Bool(true));
-    assert_eq!(env["data"].as_array().map(|a| a.len()), Some(1));
+    assert!(env["data"].is_object());
     // meta is present and volatile: a request_id string the normalize step drops.
     assert!(env["meta"]["request_id"].is_string());
 }
@@ -35,21 +35,13 @@ fn envelope_is_ok_with_one_data_row() {
 #[test]
 fn commands_and_verbs_agree() {
     let env = capabilities();
-    let commands: Vec<&str> = env["commands"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .map(|v| v.as_str().unwrap())
-        .collect();
-    assert_eq!(
-        commands,
-        ["check", "capture", "preflight", "release", "capabilities"]
-    );
+    assert_eq!(env["commands"], serde_json::json!([]));
+    let commands = ["check", "capture", "preflight", "release", "capabilities"];
 
-    // Every top-level command has a detailed entry in data[0].verbs.
-    let verbs = env["data"][0]["verbs"].as_object().unwrap();
-    for c in &commands {
-        assert!(verbs.contains_key(*c), "verbs is missing `{c}`");
+    // Every top-level command has a detailed entry in data.verbs.
+    let verbs = env["data"]["verbs"].as_object().unwrap();
+    for c in commands {
+        assert!(verbs.contains_key(c), "verbs is missing `{c}`");
     }
     // capture is the one verb that needs a contract.
     assert_eq!(verbs["capture"]["needs_contract"], Value::Bool(true));
@@ -60,24 +52,24 @@ fn commands_and_verbs_agree() {
 #[test]
 fn pins_the_self_claim_paths() {
     let env = capabilities();
-    let data = &env["data"][0];
+    let data = &env["data"];
 
-    assert_eq!(data["contract_version"], "1");
+    assert_eq!(data["contract_version"], "0.1");
 
-    // exit_codes keyed by the three exit values.
+    // exit_codes keyed by the stable exit dictionary.
     let exit_codes = data["exit_codes"].as_object().unwrap();
-    for k in ["0", "1", "2"] {
+    for k in ["0", "1", "2", "3", "4", "5", "6"] {
         assert!(exit_codes.contains_key(k), "exit_codes is missing `{k}`");
     }
 
-    // STRAY_BLOCK is a GATE fault that exits 1: the per-code value claims in
+    // STRAY_BLOCK is a GATE fault that exits 2: the per-code value claims in
     // CONTRACT.md pin exactly this.
     let stray = &data["error_codes"]["STRAY_BLOCK"];
     assert_eq!(stray["family"], "GATE");
-    assert_eq!(stray["exit"], 1);
+    assert_eq!(stray["exit"], 2);
 
-    // USAGE is the only family that exits 2.
-    assert_eq!(data["error_codes"]["USAGE"]["exit"], 2);
+    // Invalid input uses exit 1.
+    assert_eq!(data["error_codes"]["UNKNOWN_FLAG"]["exit"], 1);
 
     // Release diagnostics remain visible in the same generated catalog.
     assert_eq!(
@@ -108,7 +100,7 @@ fn version_is_available_without_a_project_config() {
     );
 
     let envelope = capabilities();
-    let global_flags = envelope["data"][0]["global_flags"]
+    let global_flags = envelope["data"]["global_flags"]
         .as_array()
         .expect("global_flags array");
     assert!(global_flags.iter().any(|flag| flag["name"] == "--version"));

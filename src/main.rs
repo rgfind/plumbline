@@ -29,96 +29,49 @@
 //! by name inside a repo, like `br`. plumbline itself stays generic.
 
 mod commands;
+mod cli;
 mod config;
 mod diagnostic;
 mod engine;
 mod markers;
 mod registry;
 mod release;
+mod result;
 
 use config::Config;
-use diagnostic::{codes, Diagnostic};
-use std::path::PathBuf;
 use std::process::ExitCode;
+use std::time::Instant;
 
 fn main() -> ExitCode {
+    let started = Instant::now();
     let args: Vec<String> = std::env::args().skip(1).collect();
-
-    if args.len() == 1 && args[0] == "--version" {
-        println!("plumb {}", env!("CARGO_PKG_VERSION"));
-        return ExitCode::SUCCESS;
-    }
-
-    // Pull an optional `--config <path>` from anywhere in the args; the rest is
-    // the verb and its flags.
-    let mut config_path = PathBuf::from("plumbline.json");
-    let mut rest: Vec<String> = Vec::new();
-    let mut it = args.iter();
-    while let Some(a) = it.next() {
-        if a == "--config" {
-            match it.next() {
-                Some(p) => config_path = PathBuf::from(p),
-                None => return fail(Diagnostic::new(codes::USAGE, "--config needs a path")),
+    let parsed = cli::parse(&args);
+    let json_mode = parsed.as_ref().map(|invocation| invocation.json).unwrap_or_else(|_| args.iter().take_while(|arg| arg.as_str() != "--").any(|arg| arg == "--json"));
+    let operation = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| parsed.and_then(|invocation| {
+        if invocation.version {
+            return Ok(result::CommandResult::new(serde_json::json!({"version": env!("CARGO_PKG_VERSION"), "contract_version": result::CONTRACT_VERSION}), format!("plumb {}", env!("CARGO_PKG_VERSION"))));
+        }
+        if invocation.help || invocation.verb.is_none() {
+            return Ok(result::CommandResult::new(serde_json::json!({"help": cli::terse_help()}), cli::terse_help()));
+        }
+        match invocation.verb.expect("checked above") {
+            cli::Verb::Capabilities => commands::cmd_capabilities(),
+            verb => {
+                let root = std::env::current_dir().map_err(|e| diagnostic::Diagnostic::new(diagnostic::codes::WORKDIR_UNREADABLE, format!("cannot determine working directory: {e}")))?;
+                let cfg = Config::load(&invocation.config_path, root)?;
+                match verb {
+                    cli::Verb::Check => commands::cmd_check(&cfg),
+                    cli::Verb::Capture => commands::cmd_capture(&cfg, invocation.capture_check),
+                    cli::Verb::Preflight => commands::cmd_preflight(&cfg),
+                    cli::Verb::Release => commands::cmd_release(&cfg),
+                    cli::Verb::Capabilities => unreachable!(),
+                }
             }
-        } else {
-            rest.push(a.clone());
         }
-    }
-
-    let cmd = rest.first().map(String::as_str).unwrap_or("");
-    if !matches!(
-        cmd,
-        "check" | "capture" | "preflight" | "release" | "capabilities"
-    ) {
-        return fail(Diagnostic::new(
-            codes::USAGE,
-            "usage: plumb [--config <path>] \
-             <check | capture [--check] | preflight | release | capabilities>\n       plumb --version",
-        ));
-    }
-
-    // `capabilities` describes the tool, not a project, so it needs no config
-    // and must run in any directory. Dispatch it before touching the config.
-    if cmd == "capabilities" {
-        return match commands::cmd_capabilities() {
-            Ok(()) => ExitCode::SUCCESS,
-            Err(d) => fail(d),
-        };
-    }
-
-    let root = match std::env::current_dir() {
-        Ok(d) => d,
-        Err(e) => {
-            return fail(Diagnostic::new(
-                codes::WORKDIR_UNREADABLE,
-                format!("cannot determine working directory: {e}"),
-            ))
-        }
-    };
-    let cfg = match Config::load(&config_path, root) {
-        Ok(c) => c,
-        Err(d) => return fail(d),
-    };
-
-    let result = match cmd {
-        "check" => commands::cmd_check(&cfg),
-        "capture" => {
-            commands::cmd_capture(&cfg, rest.get(1).map(String::as_str) == Some("--check"))
-        }
-        "preflight" => commands::cmd_preflight(&cfg),
-        "release" => commands::cmd_release(&cfg),
-        _ => unreachable!("verb already validated"),
-    };
-
-    match result {
-        Ok(()) => ExitCode::SUCCESS,
-        Err(d) => fail(d),
-    }
-}
-
-/// Print a diagnostic as `plumb: [CODE] message` and return its family's exit
-/// code. The `[CODE]` prefix is what makes the contract's codes observable.
-fn fail(d: Diagnostic) -> ExitCode {
-    eprintln!("plumb: {d}");
-    ExitCode::from(d.exit())
+    })))
+    .unwrap_or_else(|_| Err(diagnostic::Diagnostic::new(
+        diagnostic::codes::INTERNAL,
+        "an unexpected internal fault occurred; include this invocation and request ID in a bug report",
+    )));
+    ExitCode::from(result::render(operation, json_mode, started))
 }

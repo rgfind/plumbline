@@ -16,6 +16,7 @@ use crate::engine;
 use crate::markers::{extract_generated, generated_ids, replace_generated};
 use crate::registry::{check_claims, normalized};
 use crate::release;
+use crate::result::CommandResult;
 use serde_json::{json, Map, Value};
 use std::path::Path;
 use std::process::Command;
@@ -39,10 +40,12 @@ fn read_json(path: &Path) -> Result<Value, Diagnostic> {
 
 // ---- check -----------------------------------------------------------------
 
-pub fn cmd_check(cfg: &Config) -> Result<(), Diagnostic> {
+pub fn cmd_check(cfg: &Config) -> Result<CommandResult, Diagnostic> {
     let n = check_docs_against_fixture(cfg)?;
-    println!("plumbline: {n} registered claim(s) match the committed fixture");
-    Ok(())
+    Ok(CommandResult::new(
+        json!({"operation": "check", "claims_checked": n, "surfaces_scanned": cfg.surfaces.len(), "status": "passed"}),
+        format!("plumbline: {n} registered claim(s) match the committed fixture"),
+    ))
 }
 
 /// Assert every registered claim equals its fixture field and no surface carries
@@ -108,15 +111,15 @@ fn check_docs_against_fixture(cfg: &Config) -> Result<usize, Diagnostic> {
 
 // ---- capture ---------------------------------------------------------------
 
-pub fn cmd_capture(cfg: &Config, check_only: bool) -> Result<(), Diagnostic> {
+pub fn cmd_capture(cfg: &Config, check_only: bool) -> Result<CommandResult, Diagnostic> {
     let (capture, fixture) = require_contract(cfg)?;
 
     if check_only {
         fixture_matches_binary(cfg)?;
-        println!(
-            "plumbline: committed fixture is current (contract-equivalent to a fresh capture)"
-        );
-        return Ok(());
+        return Ok(CommandResult::new(
+            json!({"operation": "capture", "mode": "check", "fixture_path": fixture, "status": "current"}),
+            "plumbline: committed fixture is current (contract-equivalent to a fresh capture)",
+        ));
     }
 
     let fixture_path = cfg.root.join(fixture);
@@ -126,7 +129,8 @@ pub fn cmd_capture(cfg: &Config, check_only: bool) -> Result<(), Diagnostic> {
     text.push('\n');
     std::fs::write(&fixture_path, text)
         .map_err(|e| Diagnostic::new(codes::WRITE_FAILED, format!("write {fixture}: {e}")))?;
-    println!("plumbline: rewrote {fixture} from a fresh capture");
+    let mut human = vec![format!("plumbline: rewrote {fixture} from a fresh capture")];
+    let mut blocks = Vec::new();
 
     // The capture above already built the binary; render every block from it.
     for gen in &cfg.generated {
@@ -144,12 +148,17 @@ pub fn cmd_capture(cfg: &Config, check_only: bool) -> Result<(), Diagnostic> {
             std::fs::write(&surface_path, updated).map_err(|e| {
                 Diagnostic::new(codes::WRITE_FAILED, format!("write {}: {e}", gen.surface))
             })?;
-            println!("plumbline: regenerated `{}` in {}", gen.id, gen.surface);
+            human.push(format!("plumbline: regenerated `{}` in {}", gen.id, gen.surface));
         } else {
-            println!("plumbline: `{}` in {} already current", gen.id, gen.surface);
+            human.push(format!("plumbline: `{}` in {} already current", gen.id, gen.surface));
         }
+        blocks.push(gen.id.clone());
     }
-    Ok(())
+    blocks.sort();
+    Ok(CommandResult::new(
+        json!({"operation": "capture", "mode": "write", "fixture_path": fixture, "generated_blocks": blocks, "status": "updated"}),
+        human.join("\n"),
+    ))
 }
 
 /// Both `capture` verbs and the fixture-freshness gate need a declared capture
@@ -186,14 +195,14 @@ fn fixture_matches_binary(cfg: &Config) -> Result<(), Diagnostic> {
 
 // ---- preflight (the publish stop-sign) -------------------------------------
 
-pub fn cmd_preflight(cfg: &Config) -> Result<(), Diagnostic> {
+pub fn cmd_preflight(cfg: &Config) -> Result<CommandResult, Diagnostic> {
     let name = cfg
         .capture
         .as_ref()
         .and_then(|c| c.command.first())
         .cloned()
         .unwrap_or_else(|| "the crate".into());
-    println!("preflight: publish gate for `{name}` (crates.io is write-once)");
+    let mut human = vec![format!("preflight: publish gate for `{name}` (crates.io is write-once)")];
 
     // Build the gate list. Gates 1, 3 and 4 apply to every crate. Gate 2
     // (fixture freshness) is present only when the crate declares a contract to
@@ -236,22 +245,22 @@ pub fn cmd_preflight(cfg: &Config) -> Result<(), Diagnostic> {
     for (i, (label, run)) in gates.iter().enumerate() {
         let step = i + 1;
         match run() {
-            Ok(note) => println!("  [{step}/{total}] PASS  {label} — {note}"),
+            Ok(note) => human.push(format!("  [{step}/{total}] PASS  {label} — {note}")),
             Err(d) => {
                 failures += 1;
-                println!("  [{step}/{total}] FAIL  {label}");
+                human.push(format!("  [{step}/{total}] FAIL  {label}"));
                 // Print the failing gate's own diagnostic, code and all, so the
                 // leaf code (for example `[STRAY_BLOCK]`) is visible per gate.
                 for line in d.to_string().lines() {
-                    println!("            {line}");
+                    human.push(format!("            {line}"));
                 }
             }
         }
     }
 
     if failures == 0 {
-        println!("preflight: OK — every gate passed; safe to `cargo publish`");
-        Ok(())
+        human.push("preflight: OK — every gate passed; safe to `cargo publish`".into());
+        Ok(CommandResult::new(json!({"operation": "preflight", "status": "passed"}), human.join("\n")))
     } else {
         Err(Diagnostic::new(
             codes::PREFLIGHT_FAILED,
@@ -263,9 +272,10 @@ pub fn cmd_preflight(cfg: &Config) -> Result<(), Diagnostic> {
 /// Validate and publish one guarded release. The release module owns every
 /// external Git and Cargo call; preflight remains in-process so it keeps the
 /// same complete gate report as the standalone command.
-pub fn cmd_release(cfg: &Config) -> Result<(), Diagnostic> {
+pub fn cmd_release(cfg: &Config) -> Result<CommandResult, Diagnostic> {
     let mut runner = release::SystemRunner;
-    release::run(cfg, &mut runner, || cmd_preflight(cfg))
+    let message = release::run(cfg, &mut runner, || cmd_preflight(cfg).map(|_| ()))?;
+    Ok(CommandResult::new(json!({"operation": "release", "status": "submitted"}), message))
 }
 
 /// Gate: the git worktree has no uncommitted changes. `cargo publish` packages
@@ -357,10 +367,8 @@ fn generated_blocks_fresh(cfg: &Config) -> Result<String, Diagnostic> {
 /// `error_codes` is built straight from `diagnostic::codes::ALL`, so the emitted
 /// catalog is exactly the set of codes the tool can raise: the doc cannot claim
 /// a code the binary lacks, nor omit one it has.
-pub fn cmd_capabilities() -> Result<(), Diagnostic> {
+pub fn cmd_capabilities() -> Result<CommandResult, Diagnostic> {
     let version = env!("CARGO_PKG_VERSION");
-    let started = std::time::Instant::now();
-
     let mut error_codes = Map::new();
     for c in codes::ALL {
         error_codes.insert(
@@ -374,16 +382,24 @@ pub fn cmd_capabilities() -> Result<(), Diagnostic> {
     }
 
     let data = json!({
-        "contract_version": "1",
+        "contract_version": crate::result::CONTRACT_VERSION,
         "tool_version": version,
         "exit_codes": {
-            "0": {"meaning": "success; every gate and claim held", "retryable": false},
-            "1": {"meaning": "a gate, claim, capture, or config step failed", "retryable": false},
-            "2": {"meaning": "usage error (unknown verb, or --config without a path)", "retryable": false},
+            "0": {"meaning": "success", "retryable": null},
+            "1": {"meaning": "invalid caller input", "retryable": false},
+            "2": {"meaning": "safety block", "retryable": false},
+            "3": {"meaning": "local tool or environment error", "retryable": null},
+            "4": {"meaning": "transient failure", "retryable": true},
+            "5": {"meaning": "conflict", "retryable": false},
+            "6": {"meaning": "internal defect", "retryable": false},
         },
         "global_flags": [
             {"name": "--config", "arg": "path",
              "summary": "path to the project config (default ./plumbline.json)"},
+            {"name": "--json", "arg": null, "summary": "select machine output"},
+            {"name": "--no-color", "arg": null, "summary": "disable ANSI in human output"},
+            {"name": "--color", "arg": "auto|always|never", "summary": "select human ANSI policy"},
+            {"name": "--help", "arg": null, "summary": "show terse help"},
             {"name": "--version", "arg": null,
              "summary": "print the installed plumb version; needs no config"}
         ],
@@ -413,34 +429,5 @@ pub fn cmd_capabilities() -> Result<(), Diagnostic> {
         "error_codes": Value::Object(error_codes),
         "warning_codes": [],
     });
-
-    let envelope = json!({
-        "ok": true,
-        "tool_version": version,
-        "meta": {
-            "request_id": format!("{:x}-{:x}", std::process::id(), nanos()),
-            "elapsed_ms": started.elapsed().as_millis() as u64,
-        },
-        "commands": ["check", "capture", "preflight", "release", "capabilities"],
-        "warnings": [],
-        "errors": [],
-        "data": [data],
-    });
-
-    let mut text = serde_json::to_string_pretty(&envelope).map_err(|e| {
-        Diagnostic::new(codes::WRITE_FAILED, format!("serialize capabilities: {e}"))
-    })?;
-    text.push('\n');
-    print!("{text}");
-    Ok(())
-}
-
-/// Nanoseconds since the epoch, for the volatile `request_id`. Zero if the clock
-/// is before the epoch (it never is); the value is normalized away in any
-/// comparison, so its only job is to differ run to run.
-fn nanos() -> u128 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_nanos())
-        .unwrap_or(0)
+    Ok(CommandResult::new(data, "plumb capabilities: use --json for the full contract"))
 }

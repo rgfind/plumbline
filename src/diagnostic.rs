@@ -20,6 +20,12 @@ pub enum Family {
     Capture,
     /// A guard verdict: the crate is out of lockstep and must not publish.
     Gate,
+    /// A temporary condition that a caller can retry.
+    Transient,
+    /// An immutable state disagreement.
+    Conflict,
+    /// A defect in plumb itself.
+    Internal,
 }
 
 impl Family {
@@ -32,15 +38,22 @@ impl Family {
             Family::Env => "ENV",
             Family::Capture => "CAPTURE",
             Family::Gate => "GATE",
+            Family::Transient => "TRANSIENT",
+            Family::Conflict => "CONFLICT",
+            Family::Internal => "INTERNAL",
         }
     }
 
-    /// Usage errors exit 2; every other family exits 1.
+    /// The stable 0.0.3 exit dictionary. `null` retryability is a capability
+    /// fact; this method only selects the process exit status.
     pub fn exit(self) -> u8 {
-        if matches!(self, Family::Usage) {
-            2
-        } else {
-            1
+        match self {
+            Family::Usage => 1,
+            Family::Gate => 2,
+            Family::Config | Family::Env | Family::Capture => 3,
+            Family::Transient => 4,
+            Family::Conflict => 5,
+            Family::Internal => 6,
         }
     }
 }
@@ -76,6 +89,18 @@ impl Diagnostic {
     pub fn exit(&self) -> u8 {
         self.code.family.exit()
     }
+
+    /// Stable data for the universal machine envelope.
+    pub fn as_json(&self) -> serde_json::Value {
+        serde_json::json!({
+            "code": self.code.name,
+            "message": self.message,
+            "path": null,
+            "remediation": self.code.meaning,
+            "did_you_mean": null,
+            "exit_code": self.exit(),
+        })
+    }
 }
 
 impl fmt::Display for Diagnostic {
@@ -109,7 +134,16 @@ pub mod codes {
     }
 
     catalog! {
-        USAGE: Usage = "unknown verb, or --config given without a path value",
+        USAGE: Usage = "legacy invalid command input",
+        UNKNOWN_COMMAND: Usage = "the command name is not declared",
+        UNKNOWN_FLAG: Usage = "the flag is not declared for this command",
+        INVALID_INPUT: Usage = "the command input is malformed or has an invalid value",
+        MISSING_REQUIRED: Usage = "a required argument or mode selector is missing",
+        NOT_FOUND: Usage = "a requested declared value does not exist",
+        INTERNAL: Internal = "plumb encountered an unexpected internal defect",
+        LOCKED: Transient = "a short advisory lock is busy; retry after it is released",
+        CONFIG_WRITE_CONFLICT: Conflict = "the selected configuration changed before the requested write",
+        RELEASE_STATE_CONFLICT: Conflict = "the existing release state cannot prove a completed matching submission",
 
         CONFIG_UNREADABLE: Config = "the config file could not be read",
         CONFIG_INVALID_JSON: Config = "the config file is not valid JSON",
@@ -157,10 +191,13 @@ mod tests {
     use super::*;
 
     #[test]
-    fn usage_exits_two_others_exit_one() {
-        assert_eq!(Family::Usage.exit(), 2);
-        assert_eq!(Family::Config.exit(), 1);
-        assert_eq!(Family::Gate.exit(), 1);
+    fn families_use_the_stable_exit_dictionary() {
+        assert_eq!(Family::Usage.exit(), 1);
+        assert_eq!(Family::Gate.exit(), 2);
+        assert_eq!(Family::Config.exit(), 3);
+        assert_eq!(Family::Transient.exit(), 4);
+        assert_eq!(Family::Conflict.exit(), 5);
+        assert_eq!(Family::Internal.exit(), 6);
     }
 
     #[test]
@@ -174,7 +211,7 @@ mod tests {
     fn display_prefixes_the_code() {
         let d = Diagnostic::new(codes::STRAY_BLOCK, "README.md: orphan block");
         assert_eq!(d.to_string(), "[STRAY_BLOCK] README.md: orphan block");
-        assert_eq!(d.exit(), 1);
+        assert_eq!(d.exit(), 2);
     }
 
     #[test]
