@@ -41,7 +41,10 @@ fn commands_and_verbs_agree() {
         .iter()
         .map(|v| v.as_str().unwrap())
         .collect();
-    assert_eq!(commands, ["check", "capture", "preflight", "capabilities"]);
+    assert_eq!(
+        commands,
+        ["check", "capture", "preflight", "release", "capabilities"]
+    );
 
     // Every top-level command has a detailed entry in data[0].verbs.
     let verbs = env["data"][0]["verbs"].as_object().unwrap();
@@ -51,6 +54,7 @@ fn commands_and_verbs_agree() {
     // capture is the one verb that needs a contract.
     assert_eq!(verbs["capture"]["needs_contract"], Value::Bool(true));
     assert_eq!(verbs["check"]["needs_contract"], Value::Bool(false));
+    assert_eq!(verbs["release"]["needs_contract"], Value::Bool(false));
 }
 
 #[test]
@@ -74,6 +78,16 @@ fn pins_the_self_claim_paths() {
 
     // USAGE is the only family that exits 2.
     assert_eq!(data["error_codes"]["USAGE"]["exit"], 2);
+
+    // Release diagnostics remain visible in the same generated catalog.
+    assert_eq!(
+        data["error_codes"]["RELEASE_CONFIG_MISSING"]["family"],
+        "CONFIG"
+    );
+    assert_eq!(
+        data["error_codes"]["PUBLISH_DRY_RUN_FAILED"]["family"],
+        "GATE"
+    );
 
     // No warnings surface yet.
     assert_eq!(data["warning_codes"], serde_json::json!([]));

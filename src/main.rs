@@ -14,6 +14,9 @@
 //!   plumb preflight            the publish stop-sign: run every gate that must
 //!                              hold at `cargo publish` and exit non-zero unless
 //!                              all pass.
+//!   plumb release              validate a release, create an annotated version
+//!                              tag, and atomically push the branch and tag.
+//!                              It runs only `cargo publish --dry-run` locally.
 //!   plumb capabilities         emit plumb's own contract (verbs, exit codes,
 //!                              gates, and the full error-code catalog) as JSON
 //!                              on stdout. Needs no config; runs anywhere.
