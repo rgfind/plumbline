@@ -7,6 +7,7 @@
   "normalize_meta": ["request_id", "elapsed_ms"],
   "surfaces": ["README.md"],
   "package_allowlist": "cargo-include",
+  "release": {"branch": "main", "remote": "origin"},
   "claims": [
     {
       "id": "contract_version",
@@ -18,7 +19,7 @@
       "id": "verb_set",
       "mode": "keys",
       "fixture_path": "data.0.verbs",
-      "expected": ["check", "capture", "preflight", "capabilities"]
+      "expected": ["check", "capture", "preflight", "release", "capabilities"]
     },
     {
       "id": "exit_code_set",
@@ -37,12 +38,18 @@
         "CONFIG_SCHEMA",
         "CONFIG_INCOHERENT",
         "ALLOWLIST_UNKNOWN",
+        "RELEASE_CONFIG_MISSING",
         "WORKDIR_UNREADABLE",
         "FIXTURE_UNREADABLE",
         "SURFACE_UNREADABLE",
         "WRITE_FAILED",
         "GIT_UNAVAILABLE",
         "PACKAGE_LIST_FAILED",
+        "CARGO_METADATA_FAILED",
+        "CARGO_UNAVAILABLE",
+        "REMOTE_UNAVAILABLE",
+        "TAG_CREATE_FAILED",
+        "PUSH_FAILED",
         "NO_CONTRACT",
         "BUILD_FAILED",
         "CAPTURE_RUN_FAILED",
@@ -55,7 +62,12 @@
         "STRAY_BLOCK",
         "PACKAGED_LEAK",
         "BLOCK_STALE",
-        "PREFLIGHT_FAILED"
+        "PREFLIGHT_FAILED",
+        "RELEASE_BRANCH_MISMATCH",
+        "UPSTREAM_NOT_SYNCED",
+        "CHANGELOG_VERSION_MISSING",
+        "TAG_EXISTS",
+        "PUBLISH_DRY_RUN_FAILED"
       ]
     },
     {

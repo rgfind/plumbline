@@ -3,6 +3,7 @@
     "check",
     "capture",
     "preflight",
+    "release",
     "capabilities"
   ],
   "data": [
@@ -33,6 +34,21 @@
           "exit": 1,
           "family": "CAPTURE",
           "meaning": "the capture command was empty or exited non-zero"
+        },
+        "CARGO_METADATA_FAILED": {
+          "exit": 1,
+          "family": "ENV",
+          "meaning": "cargo metadata could not run, failed, or produced unusable data"
+        },
+        "CARGO_UNAVAILABLE": {
+          "exit": 1,
+          "family": "ENV",
+          "meaning": "cargo publish --dry-run could not start"
+        },
+        "CHANGELOG_VERSION_MISSING": {
+          "exit": 1,
+          "family": "GATE",
+          "meaning": "CHANGELOG.md has no accepted H2 heading for the package version"
         },
         "CLAIM_DRIFT": {
           "exit": 1,
@@ -99,6 +115,31 @@
           "family": "GATE",
           "meaning": "one or more gates failed (the aggregate; the gate codes are the ground truth)"
         },
+        "PUBLISH_DRY_RUN_FAILED": {
+          "exit": 1,
+          "family": "GATE",
+          "meaning": "cargo publish --dry-run --locked failed"
+        },
+        "PUSH_FAILED": {
+          "exit": 1,
+          "family": "ENV",
+          "meaning": "the branch and release tag could not be pushed atomically"
+        },
+        "RELEASE_BRANCH_MISMATCH": {
+          "exit": 1,
+          "family": "GATE",
+          "meaning": "HEAD is detached or is not on the configured release branch"
+        },
+        "RELEASE_CONFIG_MISSING": {
+          "exit": 1,
+          "family": "CONFIG",
+          "meaning": "release was requested but the config has no release object"
+        },
+        "REMOTE_UNAVAILABLE": {
+          "exit": 1,
+          "family": "ENV",
+          "meaning": "the configured git remote could not be queried"
+        },
         "RENDER_FAILED": {
           "exit": 1,
           "family": "CAPTURE",
@@ -113,6 +154,21 @@
           "exit": 1,
           "family": "ENV",
           "meaning": "a doc surface could not be read"
+        },
+        "TAG_CREATE_FAILED": {
+          "exit": 1,
+          "family": "ENV",
+          "meaning": "the annotated release tag could not be created"
+        },
+        "TAG_EXISTS": {
+          "exit": 1,
+          "family": "GATE",
+          "meaning": "the release tag already exists locally or on the configured remote"
+        },
+        "UPSTREAM_NOT_SYNCED": {
+          "exit": 1,
+          "family": "GATE",
+          "meaning": "the configured release branch is ahead of or behind its upstream"
         },
         "USAGE": {
           "exit": 2,
@@ -183,7 +239,7 @@
           "summary": "print the installed plumb version; needs no config"
         }
       ],
-      "tool_version": "0.0.1",
+      "tool_version": "0.0.2",
       "value_domains": {
         "claim_mode": [
           "value",
@@ -216,6 +272,11 @@
           "flags": [],
           "needs_contract": false,
           "summary": "the publish stop-sign; run every applicable gate"
+        },
+        "release": {
+          "flags": [],
+          "needs_contract": false,
+          "summary": "validate, tag, and atomically push; publish is dry-run only locally"
         }
       },
       "warning_codes": []
@@ -224,9 +285,9 @@
   "errors": [],
   "meta": {
     "elapsed_ms": 0,
-    "request_id": "11002-18d51a646db05688"
+    "request_id": "13bf7-18d560c616b56d20"
   },
   "ok": true,
-  "tool_version": "0.0.1",
+  "tool_version": "0.0.2",
   "warnings": []
 }
