@@ -124,7 +124,7 @@ pub fn cmd_capture(cfg: &Config, check_only: bool) -> Result<CommandResult, Diag
     }
 
     let fixture_path = cfg.root.join(fixture);
-    let captured = engine::capture(&cfg.root, capture)?;
+    let (captured, executable) = engine::capture_with_executable(&cfg.root, capture)?;
     let mut text = serde_json::to_string_pretty(&captured)
         .map_err(|e| Diagnostic::new(codes::WRITE_FAILED, format!("serialize fixture: {e}")))?;
     text.push('\n');
@@ -141,7 +141,7 @@ pub fn cmd_capture(cfg: &Config, check_only: bool) -> Result<CommandResult, Diag
                 format!("read {}: {e}", gen.surface),
             )
         })?;
-        let block = engine::render_block(&cfg.root, gen)?;
+        let block = engine::render_block(&executable, gen)?;
         let updated = replace_generated(&doc, &gen.id, &block)
             .map_err(|e| Diagnostic::new(codes::MARKER_MISSING, e))?;
         if updated != doc {

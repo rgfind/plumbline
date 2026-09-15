@@ -1,7 +1,7 @@
 {
   "capture": {
     "build": ["cargo", "build"],
-    "command": ["plumb", "capabilities"]
+    "command": ["plumb", "capabilities", "--json"]
   },
   "fixture": "tests/fixtures/contract/capabilities.pl.json",
   "normalize_meta": ["request_id", "elapsed_ms"],

@@ -168,11 +168,15 @@ impl Config {
         // (build + command); a declared-but-empty block is an error, not "no
         // capture". Absent means the crate has no contract to capture.
         let capture = match doc.get("capture") {
-            Some(c) => Some(Capture {
-                build: str_vec(&c["build"], "capture.build")?,
-                command: str_vec(&c["command"], "capture.command")?,
-                env: optional_str_map(c.get("env"), "capture.env")?,
-            }),
+            Some(c) => {
+                let build = str_vec(&c["build"], "capture.build")?;
+                validate_capture_build(&build)?;
+                Some(Capture {
+                    build,
+                    command: str_vec(&c["command"], "capture.command")?,
+                    env: optional_str_map(c.get("env"), "capture.env")?,
+                })
+            }
             None => None,
         };
 
@@ -204,6 +208,14 @@ impl Config {
                 "`generated` blocks are declared but `capture` is missing; \
                  blocks render from the built binary",
             ));
+        }
+        if let Some(capture) = &capture {
+            let capture_binary = capture.command.first().expect("validated capture command");
+            for generated in &generated {
+                if generated.render.first() != Some(capture_binary) {
+                    return Err(Diagnostic::new(codes::CONFIG_INCOHERENT, format!("generated block `{}` must render with capture binary `{capture_binary}`", generated.id)));
+                }
+            }
         }
         ensure_unique_generated_ids(&generated)?;
         ensure_safe_paths(&root, fixture.as_deref(), &surfaces, &generated)?;
@@ -667,6 +679,18 @@ fn ensure_unique_generated_ids(generated: &[Generated]) -> Result<(), Diagnostic
     Ok(())
 }
 
+fn validate_capture_build(build: &[String]) -> Result<(), Diagnostic> {
+    if build.first().map(String::as_str) != Some("cargo")
+        || build.get(1).map(String::as_str) != Some("build")
+    {
+        return Err(Diagnostic::new(
+            codes::CONFIG_SCHEMA,
+            "`capture.build` must start with non-empty `cargo build` invocation",
+        ));
+    }
+    Ok(())
+}
+
 fn ensure_safe_paths(
     root: &Path,
     fixture: Option<&str>,
@@ -946,7 +970,7 @@ mod tests {
     fn duplicate_generated_ids_fail_closed() {
         let path = write_tmp(
             "duplicate-generated.json",
-            r#"{"capture":{"build":["cargo"],"command":["x"]},"generated":[{"id":"same","surface":"README.md","render":["x"],"tree":{}},{"id":"same","surface":"README.md","render":["x"],"tree":{}}]}"#,
+            r#"{"capture":{"build":["cargo","build"],"command":["x"]},"generated":[{"id":"same","surface":"README.md","render":["x"],"tree":{}},{"id":"same","surface":"README.md","render":["x"],"tree":{}}]}"#,
         );
         let error = match Config::load(&path, PathBuf::from(".")) {
             Ok(_) => panic!("duplicate generated IDs unexpectedly loaded"),

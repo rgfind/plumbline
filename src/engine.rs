@@ -10,12 +10,6 @@ use serde_json::Value;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-/// The freshly built binary lives at target/debug/<name>. The config names the
-/// binary as the first word of each command (e.g. "rf" in ["rf","capabilities"]).
-fn bin_path(root: &Path, name: &str) -> PathBuf {
-    root.join("target").join("debug").join(name)
-}
-
 /// Run a build command (e.g. ["cargo","build","--bin","rf"]) in the crate root.
 pub fn run_build(root: &Path, build: &[String]) -> Result<(), Diagnostic> {
     let (prog, args) = build
@@ -46,15 +40,92 @@ pub fn run_build(root: &Path, build: &[String]) -> Result<(), Diagnostic> {
     }
 }
 
+/// Build through Cargo's machine message stream and select the executable that
+/// Cargo itself reports for the requested binary target. This supports
+/// workspaces, profiles, target directories, and platform executable suffixes.
+fn resolve_capture_executable(root: &Path, capture: &Capture) -> Result<PathBuf, Diagnostic> {
+    let (program, original) = capture
+        .build
+        .split_first()
+        .ok_or_else(|| Diagnostic::new(codes::CONFIG_SCHEMA, "capture.build is empty"))?;
+    if program != "cargo" || original.first().map(String::as_str) != Some("build") {
+        return Err(Diagnostic::new(
+            codes::CONFIG_SCHEMA,
+            "capture.build must start with `cargo build`",
+        ));
+    }
+    let mut arguments = original.to_vec();
+    if !arguments
+        .iter()
+        .any(|argument| argument == "--message-format" || argument.starts_with("--message-format="))
+    {
+        arguments.push("--message-format=json".into());
+    }
+    let output = Command::new(cargo())
+        .args(&arguments)
+        .current_dir(root)
+        .output()
+        .map_err(|error| {
+            Diagnostic::new(
+                codes::BUILD_FAILED,
+                format!("run build `{}`: {error}", capture.build.join(" ")),
+            )
+        })?;
+    if !output.status.success() {
+        return Err(Diagnostic::new(
+            codes::BUILD_FAILED,
+            format!("build `{}` failed", capture.build.join(" ")),
+        ));
+    }
+    let name = capture
+        .command
+        .first()
+        .ok_or_else(|| Diagnostic::new(codes::CONFIG_SCHEMA, "capture.command is empty"))?;
+    let mut candidates = Vec::new();
+    for line in String::from_utf8_lossy(&output.stdout).lines() {
+        let Ok(message) = serde_json::from_str::<Value>(line) else {
+            continue;
+        };
+        if message["reason"] != "compiler-artifact" || message["target"]["name"] != *name {
+            continue;
+        }
+        if !message["target"]["kind"]
+            .as_array()
+            .is_some_and(|kind| kind.iter().any(|kind| kind == "bin"))
+        {
+            continue;
+        }
+        if let Some(executable) = message["executable"].as_str() {
+            candidates.push(PathBuf::from(executable));
+        }
+    }
+    candidates.sort();
+    candidates.dedup();
+    match candidates.as_slice() {
+        [executable] => Ok(executable.clone()),
+        [] => Err(Diagnostic::new(codes::CAPTURE_RUN_FAILED, format!("Cargo reported no executable for capture binary `{name}`; narrow `capture.build` with `--bin {name}`"))),
+        _ => Err(Diagnostic::new(codes::CAPTURE_RUN_FAILED, format!("Cargo reported ambiguous executables for capture binary `{name}`: {}; narrow `capture.build` with a package or `--bin` selector", candidates.iter().map(|path| path.display().to_string()).collect::<Vec<_>>().join(", ")))),
+    }
+}
+
 /// Build, then run the capture command under the configured env, and parse its
 /// stdout as the JSON contract envelope.
 pub fn capture(root: &Path, capture: &Capture) -> Result<Value, Diagnostic> {
-    run_build(root, &capture.build)?;
-    let (name, args) = capture
+    capture_with_executable(root, capture).map(|(captured, _)| captured)
+}
+
+/// Capture the envelope and retain the Cargo-reported executable for every
+/// generated renderer in the same capture batch.
+pub fn capture_with_executable(
+    root: &Path,
+    capture: &Capture,
+) -> Result<(Value, PathBuf), Diagnostic> {
+    let executable = resolve_capture_executable(root, capture)?;
+    let (_, args) = capture
         .command
         .split_first()
         .ok_or_else(|| Diagnostic::new(codes::CONFIG_SCHEMA, "capture.command is empty"))?;
-    let out = Command::new(bin_path(root, name))
+    let out = Command::new(&executable)
         .args(args)
         .envs(&capture.env)
         .current_dir(root)
@@ -71,12 +142,13 @@ pub fn capture(root: &Path, capture: &Capture) -> Result<Value, Diagnostic> {
             format!("capture command exited {}", out.status.code().unwrap_or(-1)),
         ));
     }
-    serde_json::from_slice(&out.stdout).map_err(|e| {
+    let captured = serde_json::from_slice(&out.stdout).map_err(|e| {
         Diagnostic::new(
             codes::CAPTURE_NOT_JSON,
             format!("captured output is not valid JSON: {e}"),
         )
-    })
+    })?;
+    Ok((captured, executable))
 }
 
 /// Render one generated block from a real run of the binary. Lays down the
@@ -86,13 +158,13 @@ pub fn capture(root: &Path, capture: &Capture) -> Result<Value, Diagnostic> {
 ///
 /// Precondition: the binary is already built. Callers build once (via
 /// `run_build`) before rendering, so a batch of blocks shares one build.
-pub fn render_block(root: &Path, gen: &Generated) -> Result<String, Diagnostic> {
+pub fn render_block(executable: &Path, gen: &Generated) -> Result<String, Diagnostic> {
     let tree = make_tree(&gen.tree)?;
-    let (name, args) = gen
+    let (_, args) = gen
         .render
         .split_first()
         .ok_or_else(|| Diagnostic::new(codes::CONFIG_SCHEMA, "render command is empty"))?;
-    let result = Command::new(bin_path(root, name))
+    let result = Command::new(executable)
         .args(args)
         .envs(&gen.env)
         .current_dir(&tree)
