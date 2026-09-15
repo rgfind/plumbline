@@ -1,6 +1,6 @@
 [package]
 name = "plumbline"
-version = "0.0.1"
+version = "0.0.2"
 edition = "2021"
 description = "Keep a Rust crate's shipped docs in lock-step with its real binary output, and gate cargo publish on it. crates.io is write-once; plumbline is the plumb-line that proves the docs hang true at the publish moment."
 license = "Apache-2.0"

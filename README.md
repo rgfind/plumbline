@@ -4,7 +4,9 @@ Use `plumb` to check that the documentation in a Rust crate describes the
 binary that `cargo publish` will package. Run `plumb preflight` before you
 publish a crate to crates.io.
 
-`plumb` checks a project contract. It does not publish a crate.
+`plumb` checks a project contract. Its local `release` command runs only a
+publish dry run. CI does the real crate publication after the pushed tag passes
+its checks.
 
 ## Install
 
@@ -18,17 +20,23 @@ Check the installed version from any directory:
 plumb --version
 ```
 
-## Before you publish
+## Release a crate
 
-Run these commands from the crate root:
+First, update the package version and add its H2 entry to `CHANGELOG.md`.
+Commit those files and push the configured release branch. Then run this from
+the crate root:
 
 ```sh
-plumb preflight
-cargo publish
+plumb release
 ```
 
-`plumb preflight` checks the fixture, claims, generated documentation, package
-file list, and worktree. It exits with a nonzero status if a check fails.
+`plumb release` requires a clean worktree on its configured branch, a
+synchronized upstream, a changelog entry for the package version, and no local
+or remote version tag. It runs `plumb preflight` and
+`cargo publish --dry-run --locked`, then creates an annotated `v<version>` tag
+and atomically pushes the branch and tag. It does not run a real `cargo publish`.
+The tag workflow in CI reruns preflight, publishes the crate, and then creates
+the source release entry.
 
 ## Configure a crate
 
@@ -65,13 +73,18 @@ expected values with values for your crate.
       "tree": {"files": {"config.py": "timeout = 30\n"}}
     }
   ],
-  "package_allowlist": "cargo-include"
+  "package_allowlist": "cargo-include",
+  "release": {"branch": "main", "remote": "origin"}
 }
 ```
 
 `capture` builds the crate and records the JSON output from its command in the
 fixture. `normalize_meta` lists output fields that change for each run. Do not
 put stable release facts in that list.
+
+The `release` object is optional for `check`, `capture`, and `preflight`. It is
+required for `plumb release`; both `branch` and `remote` must be nonempty
+strings.
 
 ## Check facts and examples
 
@@ -112,6 +125,9 @@ still matches fresh command output without writing files.
 Set `package_allowlist` to `cargo-include` to make `plumb` check the Cargo
 `include` list. This stops test files and release tooling from entering the
 published crate by mistake.
+
+`CHANGELOG.md` is release control material. Keep it outside Cargo's `include`
+list; it does not enter the crate package.
 
 ## License
 

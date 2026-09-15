@@ -30,15 +30,15 @@ unchanged. The wrapper carries meta; the contract lives in `data[0]`.
 ```json
 {
   "ok": true,
-  "tool_version": "0.0.1",
+  "tool_version": "0.0.2",
   "meta": { "request_id": "...", "elapsed_ms": 0 },
-  "commands": ["check", "capture", "preflight", "capabilities"],
+  "commands": ["check", "capture", "preflight", "release", "capabilities"],
   "warnings": [],
   "errors": [],
   "data": [
     {
       "contract_version": "1",
-      "tool_version": "0.0.1",
+      "tool_version": "0.0.2",
       "exit_codes": { },
       "global_flags": [ ],
       "verbs": { },
@@ -72,11 +72,13 @@ against an unchanged tree returns the same verdict.
 | `check` | none | no | claims equal the fixture; no stray blocks |
 | `capture` | `--check` | yes | rewrite the fixture from a fresh run; re-render blocks |
 | `preflight` | none | no | the publish stop-sign; run every applicable gate |
+| `release` | none | no | validate, tag, and atomically push; local publication is dry-run only |
 | `capabilities` | none | no | emit this contract as JSON |
 
 "Needs a contract" means the verb requires a declared `capture` and `fixture`. A
 contract-less crate runs `check`, `preflight`, and `capabilities`; `capture`
-refuses cleanly with `NO_CONTRACT`.
+refuses cleanly with `NO_CONTRACT`. `release` does not need a capture fixture,
+but it requires the separate `release` configuration object.
 
 ## Gates
 
@@ -121,12 +123,18 @@ its `exit` are the promise.
 | `CONFIG_SCHEMA` | CONFIG | 1 | a field is missing or mistyped inside a declared block |
 | `CONFIG_INCOHERENT` | CONFIG | 1 | claims declared without a fixture, or generated blocks without a capture |
 | `ALLOWLIST_UNKNOWN` | CONFIG | 1 | the `package_allowlist` value is not recognized |
+| `RELEASE_CONFIG_MISSING` | CONFIG | 1 | release was requested but the config has no release object |
 | `WORKDIR_UNREADABLE` | ENV | 1 | the working directory could not be determined |
 | `FIXTURE_UNREADABLE` | ENV | 1 | the committed fixture could not be read or parsed |
 | `SURFACE_UNREADABLE` | ENV | 1 | a doc surface could not be read |
 | `WRITE_FAILED` | ENV | 1 | the fixture or a doc surface could not be written |
 | `GIT_UNAVAILABLE` | ENV | 1 | `git status` could not run |
 | `PACKAGE_LIST_FAILED` | ENV | 1 | `cargo package --list` failed (for example a dirty tree without `--allow-dirty`) |
+| `CARGO_METADATA_FAILED` | ENV | 1 | cargo metadata could not run, failed, or produced unusable data |
+| `CARGO_UNAVAILABLE` | ENV | 1 | cargo publish dry run could not start |
+| `REMOTE_UNAVAILABLE` | ENV | 1 | the configured git remote could not be queried |
+| `TAG_CREATE_FAILED` | ENV | 1 | the annotated release tag could not be created |
+| `PUSH_FAILED` | ENV | 1 | the branch and release tag could not be pushed atomically |
 | `NO_CONTRACT` | CAPTURE | 1 | `capture` was invoked on a crate that declares no capture or fixture |
 | `BUILD_FAILED` | CAPTURE | 1 | the build command exited non-zero |
 | `CAPTURE_RUN_FAILED` | CAPTURE | 1 | the capture command was empty or exited non-zero |
@@ -140,6 +148,11 @@ its `exit` are the promise.
 | `PACKAGED_LEAK` | GATE | 1 | a packaged file falls outside the include allowlist |
 | `BLOCK_STALE` | GATE | 1 | a generated block differs from a fresh render |
 | `PREFLIGHT_FAILED` | GATE | 1 | one or more gates failed (the aggregate; the gate codes above are the ground truth) |
+| `RELEASE_BRANCH_MISMATCH` | GATE | 1 | HEAD is detached or is not on the configured release branch |
+| `UPSTREAM_NOT_SYNCED` | GATE | 1 | the configured release branch is ahead of or behind its upstream |
+| `CHANGELOG_VERSION_MISSING` | GATE | 1 | CHANGELOG.md has no accepted H2 heading for the package version |
+| `TAG_EXISTS` | GATE | 1 | the release tag already exists locally or on the configured remote |
+| `PUBLISH_DRY_RUN_FAILED` | GATE | 1 | cargo publish dry run failed |
 
 ## Warning codes
 
