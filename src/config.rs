@@ -32,6 +32,15 @@ pub struct Config {
     /// Source of the packaged-file allowlist. Only "cargo-include" for now:
     /// derive it from Cargo.toml's `include`.
     pub package_allowlist: String,
+    /// Settings that identify the branch and remote a release may publish.
+    /// Absent is valid for commands that do not release a crate.
+    pub release: Option<Release>,
+}
+
+/// The repository destination a release command is allowed to use.
+pub struct Release {
+    pub branch: String,
+    pub remote: String,
 }
 
 /// How to produce the contract envelope from the built binary.
@@ -127,6 +136,25 @@ impl Config {
             .unwrap_or("cargo-include")
             .to_string();
 
+        // Release settings are optional so existing project configurations stay
+        // valid. If a project declares this block, however, its destination
+        // must be complete and explicit.
+        let release = match doc.get("release") {
+            None => None,
+            Some(value) => {
+                if !value.is_object() {
+                    return Err(Diagnostic::new(
+                        codes::CONFIG_SCHEMA,
+                        "`release` must be an object",
+                    ));
+                }
+                Some(Release {
+                    branch: req_nonempty_str(&value["branch"], "release.branch")?,
+                    remote: req_nonempty_str(&value["remote"], "release.remote")?,
+                })
+            }
+        };
+
         Ok(Config {
             root,
             capture,
@@ -136,6 +164,7 @@ impl Config {
             surfaces,
             generated,
             package_allowlist,
+            release,
         })
     }
 }
@@ -172,6 +201,17 @@ fn req_str(v: &Value, field: &str) -> Result<String, Diagnostic> {
     v.as_str()
         .map(str::to_string)
         .ok_or_else(|| Diagnostic::new(codes::CONFIG_SCHEMA, format!("`{field}` must be a string")))
+}
+
+fn req_nonempty_str(v: &Value, field: &str) -> Result<String, Diagnostic> {
+    let value = req_str(v, field)?;
+    if value.trim().is_empty() {
+        return Err(Diagnostic::new(
+            codes::CONFIG_SCHEMA,
+            format!("`{field}` must not be empty"),
+        ));
+    }
+    Ok(value)
 }
 
 fn str_vec(v: &Value, field: &str) -> Result<Vec<String>, Diagnostic> {
@@ -264,7 +304,8 @@ mod tests {
                  "prompt":"$ rf content .",
                  "tree":{"git_init":true,"files":{"a.py":"x = 1\n"}}}
               ],
-              "package_allowlist": "cargo-include"
+              "package_allowlist": "cargo-include",
+              "release": {"branch":"main","remote":"origin"}
             }"#,
         );
         let cfg = Config::load(&p, PathBuf::from(".")).unwrap();
@@ -284,6 +325,9 @@ mod tests {
         assert!(g.tree.git_init);
         assert_eq!(g.tree.files["a.py"], "x = 1\n");
         assert_eq!(cfg.package_allowlist, "cargo-include");
+        let release = cfg.release.as_ref().unwrap();
+        assert_eq!(release.branch, "main");
+        assert_eq!(release.remote, "origin");
     }
 
     #[test]
@@ -304,6 +348,7 @@ mod tests {
         assert!(cfg.fixture.is_none());
         assert!(cfg.claims.is_empty());
         assert_eq!(cfg.surfaces, ["README.md"]);
+        assert!(cfg.release.is_none());
     }
 
     #[test]
@@ -323,5 +368,35 @@ mod tests {
                 "generated":[{"id":"x","surface":"README.md","render":["dummy"],"tree":{}}]}"#,
         );
         assert!(Config::load(&p, PathBuf::from(".")).is_err());
+    }
+
+    #[test]
+    fn release_requires_an_object_with_nonempty_branch_and_remote() {
+        for (name, body) in [
+            ("release-scalar.json", r#"{"release":"origin"}"#),
+            (
+                "release-missing-branch.json",
+                r#"{"release":{"remote":"origin"}}"#,
+            ),
+            (
+                "release-missing-remote.json",
+                r#"{"release":{"branch":"main"}}"#,
+            ),
+            (
+                "release-mistyped.json",
+                r#"{"release":{"branch":true,"remote":"origin"}}"#,
+            ),
+            (
+                "release-empty.json",
+                r#"{"release":{"branch":"","remote":" "}}"#,
+            ),
+        ] {
+            let p = write_tmp(name, body);
+            let error = match Config::load(&p, PathBuf::from(".")) {
+                Ok(_) => panic!("{name} unexpectedly loaded"),
+                Err(error) => error,
+            };
+            assert_eq!(error.code.name, "CONFIG_SCHEMA");
+        }
     }
 }

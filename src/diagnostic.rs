@@ -116,6 +116,7 @@ pub mod codes {
         CONFIG_SCHEMA: Config = "a field is missing or mistyped inside a declared block",
         CONFIG_INCOHERENT: Config = "claims declared without a fixture, or generated blocks without a capture",
         ALLOWLIST_UNKNOWN: Config = "the package_allowlist value is not recognized",
+        RELEASE_CONFIG_MISSING: Config = "release was requested but the config has no release object",
 
         WORKDIR_UNREADABLE: Env = "the working directory could not be determined",
         FIXTURE_UNREADABLE: Env = "the committed fixture could not be read or parsed",
@@ -123,6 +124,11 @@ pub mod codes {
         WRITE_FAILED: Env = "the fixture or a doc surface could not be written",
         GIT_UNAVAILABLE: Env = "git status could not run",
         PACKAGE_LIST_FAILED: Env = "cargo package --list failed (for example a dirty tree without --allow-dirty)",
+        CARGO_METADATA_FAILED: Env = "cargo metadata could not run, failed, or produced unusable data",
+        CARGO_UNAVAILABLE: Env = "cargo publish --dry-run could not start",
+        REMOTE_UNAVAILABLE: Env = "the configured git remote could not be queried",
+        TAG_CREATE_FAILED: Env = "the annotated release tag could not be created",
+        PUSH_FAILED: Env = "the branch and release tag could not be pushed atomically",
 
         NO_CONTRACT: Capture = "capture was invoked on a crate that declares no capture or fixture",
         BUILD_FAILED: Capture = "the build command exited non-zero",
@@ -138,6 +144,11 @@ pub mod codes {
         PACKAGED_LEAK: Gate = "a packaged file falls outside the include allowlist",
         BLOCK_STALE: Gate = "a generated block differs from a fresh render",
         PREFLIGHT_FAILED: Gate = "one or more gates failed (the aggregate; the gate codes are the ground truth)",
+        RELEASE_BRANCH_MISMATCH: Gate = "HEAD is detached or is not on the configured release branch",
+        UPSTREAM_NOT_SYNCED: Gate = "the configured release branch is ahead of or behind its upstream",
+        CHANGELOG_VERSION_MISSING: Gate = "CHANGELOG.md has no accepted H2 heading for the package version",
+        TAG_EXISTS: Gate = "the release tag already exists locally or on the configured remote",
+        PUBLISH_DRY_RUN_FAILED: Gate = "cargo publish --dry-run --locked failed",
     }
 }
 
