@@ -172,7 +172,7 @@ const CARGO_META: &[&str] = &[
 /// or matches an `include` glob from Cargo.toml. Returns a note on success, and
 /// on failure the list of files that would leak into the archive.
 pub fn packaged_within_allowlist(root: &Path, allowlist: &str) -> Result<String, Diagnostic> {
-    let globs = match allowlist {
+    let (include, exclude) = match allowlist {
         "cargo-include" => cargo_include_globs(root)?,
         other => {
             return Err(Diagnostic::new(
@@ -205,7 +205,7 @@ pub fn packaged_within_allowlist(root: &Path, allowlist: &str) -> Result<String,
     let mut stray: Vec<String> = Vec::new();
     for f in listing.lines().map(str::trim).filter(|l| !l.is_empty()) {
         count += 1;
-        if !path_is_allowed(f, &globs) {
+        if !path_is_allowed(f, &include, &exclude) {
             stray.push(f.to_string());
         }
     }
@@ -224,46 +224,67 @@ pub fn packaged_within_allowlist(root: &Path, allowlist: &str) -> Result<String,
 }
 
 /// A packaged path is allowed if it is cargo metadata or matches an include glob.
-fn path_is_allowed(p: &str, globs: &[String]) -> bool {
+fn path_is_allowed(p: &str, include: &[String], exclude: &[String]) -> bool {
     if CARGO_META.contains(&p) {
         return true;
     }
-    globs.iter().any(|g| glob_match(g, p))
+    include.iter().any(|g| glob_match(g, p)) && !exclude.iter().any(|g| glob_match(g, p))
 }
 
 /// Extract the `include` string array from Cargo.toml. This is a targeted read
 /// of one well-known array of string literals, not a general TOML parser: it
 /// keeps plumbline's single-dependency promise while making Cargo.toml the one
 /// source of truth for what ships (no separate allowlist to drift).
-fn cargo_include_globs(root: &Path) -> Result<Vec<String>, Diagnostic> {
+fn cargo_include_globs(root: &Path) -> Result<(Vec<String>, Vec<String>), Diagnostic> {
     let text = std::fs::read_to_string(root.join("Cargo.toml"))
         .map_err(|e| Diagnostic::new(codes::CONFIG_SCHEMA, format!("read Cargo.toml: {e}")))?;
-    let start = text
-        .find("include")
-        .and_then(|i| text[i..].find('[').map(|j| i + j + 1))
-        .ok_or_else(|| {
-            Diagnostic::new(codes::CONFIG_SCHEMA, "Cargo.toml has no `include` array")
-        })?;
-    let end = text[start..].find(']').map(|j| start + j).ok_or_else(|| {
+    let manifest: toml::Value = toml::from_str(&text).map_err(|e| {
         Diagnostic::new(
             codes::CONFIG_SCHEMA,
-            "Cargo.toml `include` array is unterminated",
+            format!("Cargo.toml is invalid TOML: {e}"),
         )
     })?;
-    let mut globs = Vec::new();
-    for raw in text[start..end].split(',') {
-        let g = raw.trim().trim_matches('"');
-        if !g.is_empty() {
-            globs.push(g.trim_start_matches('/').to_string());
-        }
-    }
-    if globs.is_empty() {
+    let package = manifest
+        .get("package")
+        .and_then(toml::Value::as_table)
+        .ok_or_else(|| {
+            Diagnostic::new(codes::CONFIG_SCHEMA, "Cargo.toml has no [package] table")
+        })?;
+    let include = toml_string_array(package.get("include"), "package.include")?;
+    let exclude = toml_string_array(package.get("exclude"), "package.exclude")?;
+    if include.is_empty() {
         return Err(Diagnostic::new(
             codes::CONFIG_SCHEMA,
             "Cargo.toml `include` array is empty",
         ));
     }
-    Ok(globs)
+    Ok((include, exclude))
+}
+
+fn toml_string_array(value: Option<&toml::Value>, field: &str) -> Result<Vec<String>, Diagnostic> {
+    let Some(value) = value else {
+        return Ok(Vec::new());
+    };
+    let values = value.as_array().ok_or_else(|| {
+        Diagnostic::new(
+            codes::CONFIG_SCHEMA,
+            format!("Cargo.toml `{field}` must be an array of strings"),
+        )
+    })?;
+    values
+        .iter()
+        .map(|value| {
+            value
+                .as_str()
+                .map(|value| value.trim_start_matches('/').to_string())
+                .ok_or_else(|| {
+                    Diagnostic::new(
+                        codes::CONFIG_SCHEMA,
+                        format!("Cargo.toml `{field}` must contain only strings"),
+                    )
+                })
+        })
+        .collect()
 }
 
 /// Match a gitignore-style glob (rooted at the package, leading slash already
@@ -364,7 +385,7 @@ mod tests {
             "src/main.rs",
             "src/verbs/find.rs",
         ] {
-            assert!(path_is_allowed(ok, &globs), "should be allowed: {ok}");
+            assert!(path_is_allowed(ok, &globs, &[]), "should be allowed: {ok}");
         }
         for bad in [
             "xtask/src/main.rs",
@@ -375,7 +396,10 @@ mod tests {
             "src/notes.txt",
             "deploy/build-and-deploy.sh",
         ] {
-            assert!(!path_is_allowed(bad, &globs), "should be rejected: {bad}");
+            assert!(
+                !path_is_allowed(bad, &globs, &[]),
+                "should be rejected: {bad}"
+            );
         }
     }
 
@@ -384,5 +408,24 @@ mod tests {
         assert!(segment_glob("*.rs", "main.rs"));
         assert!(segment_glob("*", "anything"));
         assert!(!segment_glob("*.rs", "main.txt"));
+    }
+
+    #[test]
+    fn manifest_arrays_use_a_toml_parser_and_apply_excludes() {
+        let manifest: toml::Value = toml::from_str(
+            "[package]\ninclude = [\n  \"src/**/*.rs\", # source\n  \"README.md\",\n]\nexclude = [\"src/private/**\"]\n",
+        )
+        .unwrap();
+        let package = manifest
+            .get("package")
+            .and_then(toml::Value::as_table)
+            .unwrap();
+        let include = toml_string_array(package.get("include"), "package.include").unwrap();
+        let exclude = toml_string_array(package.get("exclude"), "package.exclude").unwrap();
+        assert!(path_is_allowed("src/main.rs", &include, &exclude));
+        assert!(!path_is_allowed("src/private/key.rs", &include, &exclude));
+        assert!(
+            toml_string_array(Some(&toml::Value::String("bad".into())), "package.include").is_err()
+        );
     }
 }

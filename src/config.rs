@@ -171,7 +171,7 @@ impl Config {
             Some(c) => Some(Capture {
                 build: str_vec(&c["build"], "capture.build")?,
                 command: str_vec(&c["command"], "capture.command")?,
-                env: str_map(&c["env"], "capture.env")?,
+                env: optional_str_map(c.get("env"), "capture.env")?,
             }),
             None => None,
         };
@@ -205,9 +205,14 @@ impl Config {
                  blocks render from the built binary",
             ));
         }
+        ensure_unique_generated_ids(&generated)?;
+        ensure_safe_paths(&root, fixture.as_deref(), &surfaces, &generated)?;
 
         let package_allowlist = optional_string(&doc, "package_allowlist")?
             .unwrap_or_else(|| "cargo-include".to_string());
+        if package_allowlist != "cargo-include" {
+            return Err(Diagnostic::new(codes::ALLOWLIST_UNKNOWN, format!("unknown package_allowlist `{package_allowlist}`; only `cargo-include` is supported")));
+        }
 
         // Release settings are optional so existing project configurations stay
         // valid. If a project declares this block, however, its destination
@@ -603,9 +608,29 @@ pub fn read_stdin_patch() -> Result<Value, Diagnostic> {
 
 fn parse_generated(g: &Value, i: usize) -> Result<Generated, Diagnostic> {
     let where_ = format!("generated[{i}]");
-    let tree = &g["tree"];
+    let object = g.as_object().ok_or_else(|| {
+        Diagnostic::new(
+            codes::CONFIG_SCHEMA,
+            format!("`{where_}` must be an object"),
+        )
+    })?;
+    let tree = object
+        .get("tree")
+        .and_then(Value::as_object)
+        .ok_or_else(|| {
+            Diagnostic::new(
+                codes::CONFIG_SCHEMA,
+                format!("`{where_}.tree` must be an object"),
+            )
+        })?;
     let mut files = BTreeMap::new();
-    if let Some(map) = tree["files"].as_object() {
+    if let Some(files_value) = tree.get("files") {
+        let map = files_value.as_object().ok_or_else(|| {
+            Diagnostic::new(
+                codes::CONFIG_SCHEMA,
+                format!("`{where_}.tree.files` must be an object"),
+            )
+        })?;
         for (name, content) in map {
             let c = content.as_str().ok_or_else(|| {
                 Diagnostic::new(
@@ -620,13 +645,87 @@ fn parse_generated(g: &Value, i: usize) -> Result<Generated, Diagnostic> {
         id: req_str(&g["id"], &format!("{where_}.id"))?,
         surface: req_str(&g["surface"], &format!("{where_}.surface"))?,
         render: str_vec(&g["render"], &format!("{where_}.render"))?,
-        env: str_map(&g["env"], &format!("{where_}.env"))?,
-        prompt: g["prompt"].as_str().unwrap_or("").to_string(),
+        env: optional_str_map(object.get("env"), &format!("{where_}.env"))?,
+        prompt: optional_object_string(object, "prompt", &where_)?.unwrap_or_default(),
         tree: SampleTree {
-            git_init: tree["git_init"].as_bool().unwrap_or(false),
+            git_init: optional_object_bool(tree, "git_init", &where_)?.unwrap_or(false),
             files,
         },
     })
+}
+
+fn ensure_unique_generated_ids(generated: &[Generated]) -> Result<(), Diagnostic> {
+    let mut seen = std::collections::BTreeSet::new();
+    for generated in generated {
+        if !seen.insert(&generated.id) {
+            return Err(Diagnostic::new(
+                codes::CONFIG_INCOHERENT,
+                format!("generated id `{}` is declared more than once", generated.id),
+            ));
+        }
+    }
+    Ok(())
+}
+
+fn ensure_safe_paths(
+    root: &Path,
+    fixture: Option<&str>,
+    surfaces: &[String],
+    generated: &[Generated],
+) -> Result<(), Diagnostic> {
+    for path in fixture
+        .into_iter()
+        .chain(surfaces.iter().map(String::as_str))
+        .chain(generated.iter().map(|generated| generated.surface.as_str()))
+    {
+        let candidate = Path::new(path);
+        if candidate.is_absolute()
+            || candidate
+                .components()
+                .any(|component| matches!(component, std::path::Component::ParentDir))
+        {
+            return Err(Diagnostic::new(
+                codes::CONFIG_SCHEMA,
+                format!(
+                    "configured path `{path}` must stay inside crate root `{}`",
+                    root.display()
+                ),
+            ));
+        }
+    }
+    Ok(())
+}
+
+fn optional_object_string(
+    object: &serde_json::Map<String, Value>,
+    key: &str,
+    scope: &str,
+) -> Result<Option<String>, Diagnostic> {
+    match object.get(key) {
+        None => Ok(None),
+        Some(value) => value.as_str().map(str::to_string).map(Some).ok_or_else(|| {
+            Diagnostic::new(
+                codes::CONFIG_SCHEMA,
+                format!("`{scope}.{key}` must be a string"),
+            )
+        }),
+    }
+}
+
+fn optional_object_bool(
+    object: &serde_json::Map<String, Value>,
+    key: &str,
+    scope: &str,
+) -> Result<Option<bool>, Diagnostic> {
+    match object.get(key) {
+        None => Ok(None),
+        Some(value) => value.as_bool().map(Some).ok_or_else(|| {
+            Diagnostic::new(
+                codes::CONFIG_SCHEMA,
+                format!("`{scope}.{key}` must be a boolean"),
+            )
+        }),
+    }
 }
 
 fn req_str(v: &Value, field: &str) -> Result<String, Diagnostic> {
@@ -670,9 +769,6 @@ fn str_vec(v: &Value, field: &str) -> Result<Vec<String>, Diagnostic> {
 }
 
 fn str_map(v: &Value, field: &str) -> Result<BTreeMap<String, String>, Diagnostic> {
-    if v.is_null() {
-        return Ok(BTreeMap::new());
-    }
     let obj = v.as_object().ok_or_else(|| {
         Diagnostic::new(
             codes::CONFIG_SCHEMA,
@@ -694,6 +790,16 @@ fn str_map(v: &Value, field: &str) -> Result<BTreeMap<String, String>, Diagnosti
         );
     }
     Ok(out)
+}
+
+fn optional_str_map(
+    value: Option<&Value>,
+    field: &str,
+) -> Result<BTreeMap<String, String>, Diagnostic> {
+    match value {
+        None => Ok(BTreeMap::new()),
+        Some(value) => str_map(value, field),
+    }
 }
 
 #[cfg(test)]
@@ -819,5 +925,33 @@ mod tests {
             };
             assert_eq!(error.code.name, "CONFIG_SCHEMA");
         }
+    }
+
+    #[test]
+    fn optional_values_and_paths_fail_closed() {
+        for (name, body) in [
+            ("capture-null.json", r#"{"capture":null}"#),
+            ("capture-array.json", r#"{"capture":[]}"#),
+            ("fixture-null.json", r#"{"fixture":null}"#),
+            ("surfaces-scalar.json", r#"{"surfaces":"README.md"}"#),
+            ("unknown.json", r#"{"surfaecs":[]}"#),
+            ("escape-path.json", r#"{"fixture":"../fixture.json"}"#),
+        ] {
+            let path = write_tmp(name, body);
+            assert!(Config::load(&path, PathBuf::from(".")).is_err(), "{name}");
+        }
+    }
+
+    #[test]
+    fn duplicate_generated_ids_fail_closed() {
+        let path = write_tmp(
+            "duplicate-generated.json",
+            r#"{"capture":{"build":["cargo"],"command":["x"]},"generated":[{"id":"same","surface":"README.md","render":["x"],"tree":{}},{"id":"same","surface":"README.md","render":["x"],"tree":{}}]}"#,
+        );
+        let error = match Config::load(&path, PathBuf::from(".")) {
+            Ok(_) => panic!("duplicate generated IDs unexpectedly loaded"),
+            Err(error) => error,
+        };
+        assert_eq!(error.code.name, "CONFIG_INCOHERENT");
     }
 }
