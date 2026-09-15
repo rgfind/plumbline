@@ -56,6 +56,11 @@ fn main() -> ExitCode {
         }
         match invocation.verb.expect("checked above") {
             cli::Verb::Capabilities => commands::cmd_capabilities(),
+            cli::Verb::Schema => commands::cmd_schema(invocation.schema_command.as_deref()),
+            cli::Verb::RobotDocs => {
+                if invocation.robot_docs_guide { commands::cmd_robot_docs() }
+                else { Err(diagnostic::Diagnostic::new(diagnostic::codes::MISSING_REQUIRED, "robot-docs requires the `guide` section")) }
+            }
             verb => {
                 let root = std::env::current_dir().map_err(|e| diagnostic::Diagnostic::new(diagnostic::codes::WORKDIR_UNREADABLE, format!("cannot determine working directory: {e}")))?;
                 let cfg = Config::load(&invocation.config_path, root)?;
@@ -65,6 +70,7 @@ fn main() -> ExitCode {
                     cli::Verb::Preflight => commands::cmd_preflight(&cfg),
                     cli::Verb::Release => commands::cmd_release(&cfg),
                     cli::Verb::Capabilities => unreachable!(),
+                    cli::Verb::Schema | cli::Verb::RobotDocs => unreachable!(),
                 }
             }
         }

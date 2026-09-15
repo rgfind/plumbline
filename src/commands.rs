@@ -403,18 +403,8 @@ pub fn cmd_capabilities() -> Result<CommandResult, Diagnostic> {
             {"name": "--version", "arg": null,
              "summary": "print the installed plumb version; needs no config"}
         ],
-        "verbs": {
-            "check": {"flags": [], "needs_contract": false,
-                      "summary": "claims equal the fixture; no stray blocks"},
-            "capture": {"flags": ["--check"], "needs_contract": true,
-                        "summary": "rewrite the fixture from a fresh run; re-render blocks"},
-            "preflight": {"flags": [], "needs_contract": false,
-                          "summary": "the publish stop-sign; run every applicable gate"},
-            "release": {"flags": [], "needs_contract": false,
-                        "summary": "validate, tag, and atomically push; publish is dry-run only locally"},
-            "capabilities": {"flags": [], "needs_contract": false,
-                             "summary": "emit this contract as JSON"},
-        },
+        "verbs": crate::cli::capability_verbs(),
+        "parser_manifest": crate::cli::parser_manifest(),
         "gates": [
             {"id": "worktree-clean", "applies_when": "always"},
             {"id": "fixture-fresh", "applies_when": "a capture and fixture are declared"},
@@ -430,4 +420,28 @@ pub fn cmd_capabilities() -> Result<CommandResult, Diagnostic> {
         "warning_codes": [],
     });
     Ok(CommandResult::new(data, "plumb capabilities: use --json for the full contract"))
+}
+
+pub fn cmd_schema(command: Option<&str>) -> Result<CommandResult, Diagnostic> {
+    let verbs = crate::cli::capability_verbs();
+    if let Some(command) = command {
+        if verbs.get(command).is_none() {
+            return Err(Diagnostic::new(codes::INVALID_INPUT, format!("unknown command schema `{command}`; valid commands are check, capture, preflight, release, capabilities, schema, and robot-docs")));
+        }
+    }
+    let selected = command.map(|name| json!({name: verbs[name].clone()})).unwrap_or(verbs);
+    Ok(CommandResult::new(
+        json!({
+            "envelope_schema": {"type":"object", "required":["ok","tool_version","data","meta","warnings","commands","errors"]},
+            "schemas": selected,
+            "definitions": {},
+        }),
+        "plumb schema: use --json for machine-readable schemas",
+    ))
+}
+
+pub fn cmd_robot_docs() -> Result<CommandResult, Diagnostic> {
+    let names = crate::cli::COMMANDS.iter().map(|spec| spec.name).collect::<Vec<_>>().join(", ");
+    let guide = format!("# plumb agent guide\n\n1. Run `plumb capabilities --json` to discover commands.\n2. Run `plumb check` before a capture.\n3. Use `plumb capture --check` to compare fresh output.\n4. Read `plumb preflight --json` gate results before release.\n5. Use `plumb release --dry-run` when it is available.\n6. Branch on the declared exit code.\n7. Run `plumb conformance --json` when it is available.\n\nDeclared commands: {names}.");
+    Ok(CommandResult::new(json!({"guide": guide}), guide))
 }

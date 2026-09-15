@@ -1,6 +1,7 @@
 //! Registry-driven lexical parser for the initial 0.0.3 command core.
 
 use crate::diagnostic::{codes, Diagnostic};
+use serde_json::json;
 use std::path::PathBuf;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -10,18 +11,34 @@ pub enum Verb {
     Preflight,
     Release,
     Capabilities,
+    Schema,
+    RobotDocs,
 }
+
+/// The initial registry is the only list of command names and local flags.
+/// Later slices add nested verbs and payload schemas without a second parser
+/// list.
+pub struct CommandSpec {
+    pub verb: Verb,
+    pub name: &'static str,
+    pub summary: &'static str,
+    pub flags: &'static [&'static str],
+    pub needs_config: bool,
+}
+
+pub const COMMANDS: &[CommandSpec] = &[
+    CommandSpec { verb: Verb::Check, name: "check", summary: "check fixture claims and generated blocks", flags: &[], needs_config: true },
+    CommandSpec { verb: Verb::Capture, name: "capture", summary: "capture or compare current binary output", flags: &["--check"], needs_config: true },
+    CommandSpec { verb: Verb::Preflight, name: "preflight", summary: "run the ordered release gates", flags: &[], needs_config: true },
+    CommandSpec { verb: Verb::Release, name: "release", summary: "validate, tag, and atomically push", flags: &[], needs_config: true },
+    CommandSpec { verb: Verb::Capabilities, name: "capabilities", summary: "return the live command contract", flags: &[], needs_config: false },
+    CommandSpec { verb: Verb::Schema, name: "schema", summary: "return JSON Schemas for command responses", flags: &["--command"], needs_config: false },
+    CommandSpec { verb: Verb::RobotDocs, name: "robot-docs", summary: "render the agent workflow guide", flags: &[], needs_config: false },
+];
 
 impl Verb {
     pub fn parse(value: &str) -> Option<Self> {
-        match value {
-            "check" => Some(Self::Check),
-            "capture" => Some(Self::Capture),
-            "preflight" => Some(Self::Preflight),
-            "release" => Some(Self::Release),
-            "capabilities" => Some(Self::Capabilities),
-            _ => None,
-        }
+        COMMANDS.iter().find(|spec| spec.name == value).map(|spec| spec.verb)
     }
 
 }
@@ -34,6 +51,8 @@ pub struct Invocation {
     pub capture_check: bool,
     pub help: bool,
     pub version: bool,
+    pub schema_command: Option<String>,
+    pub robot_docs_guide: bool,
 }
 
 pub fn parse(args: &[String]) -> Result<Invocation, Diagnostic> {
@@ -45,6 +64,8 @@ pub fn parse(args: &[String]) -> Result<Invocation, Diagnostic> {
     let mut version = false;
     let mut capture_check = false;
     let mut verb = None;
+    let mut schema_command = None;
+    let mut robot_docs_guide = false;
     let mut raw = false;
     let mut i = 0;
 
@@ -77,6 +98,11 @@ pub fn parse(args: &[String]) -> Result<Invocation, Diagnostic> {
             color_seen = true;
         } else if token == "--config" || token.starts_with("--config=") {
             config_path = PathBuf::from(value(token, args, &mut i, "--config")?);
+        } else if token == "--command" || token.starts_with("--command=") {
+            if verb != Some(Verb::Schema) || schema_command.is_some() {
+                return Err(Diagnostic::new(codes::UNKNOWN_FLAG, "--command is declared only once for schema"));
+            }
+            schema_command = Some(value(token, args, &mut i, "--command")?);
         } else if token == "--check" {
             if verb != Some(Verb::Capture) || capture_check {
                 return Err(Diagnostic::new(codes::UNKNOWN_FLAG, "--check is declared only once for capture"));
@@ -89,6 +115,8 @@ pub fn parse(args: &[String]) -> Result<Invocation, Diagnostic> {
             if verb.is_none() {
                 return Err(Diagnostic::new(codes::UNKNOWN_COMMAND, format!("unknown command `{token}`")));
             }
+        } else if verb == Some(Verb::RobotDocs) && token == "guide" && !robot_docs_guide {
+            robot_docs_guide = true;
         } else {
             return Err(Diagnostic::new(codes::INVALID_INPUT, format!("unexpected argument `{token}`")));
         }
@@ -97,7 +125,7 @@ pub fn parse(args: &[String]) -> Result<Invocation, Diagnostic> {
     if no_color && color_seen {
         return Err(Diagnostic::new(codes::INVALID_INPUT, "select either --no-color or one --color value"));
     }
-    Ok(Invocation { verb, json, config_path, capture_check, help, version })
+    Ok(Invocation { verb, json, config_path, capture_check, help, version, schema_command, robot_docs_guide })
 }
 
 fn value(token: &str, args: &[String], i: &mut usize, flag: &str) -> Result<String, Diagnostic> {
@@ -115,8 +143,35 @@ fn value(token: &str, args: &[String], i: &mut usize, flag: &str) -> Result<Stri
     Ok(value.clone())
 }
 
-pub fn terse_help() -> &'static str {
-    "Usage: plumb [global-flags] <command> [command-flags]\n\nCommands: check, capture, preflight, release, capabilities\nGlobal flags: --config=<path>, --json, --no-color, --color=<auto|always|never>, --help, --version"
+pub fn terse_help() -> String {
+    let commands = COMMANDS.iter().map(|spec| spec.name).collect::<Vec<_>>().join(", ");
+    format!("Usage: plumb [global-flags] <command> [command-flags]\n\nCommands: {commands}\nGlobal flags: --config=<path>, --json, --no-color, --color=<auto|always|never>, --help, --version")
+}
+
+pub fn capability_verbs() -> serde_json::Value {
+    let mut verbs = serde_json::Map::new();
+    for spec in COMMANDS {
+        verbs.insert(spec.name.to_string(), json!({
+            "description": spec.summary,
+            "mutates": matches!(spec.verb, Verb::Capture | Verb::Release),
+            "positionals": [],
+            "flags": spec.flags,
+            "output_modes": ["text", "json"],
+            "possible_exit_codes": [0, 1, 2, 3, 4, 5, 6],
+            "payload_schema": {"type": "object"},
+            "meta_fields": ["request_id", "ts_iso", "elapsed_ms", "contract_version", "schema_version"],
+            "examples": [format!("plumb {} --json", spec.name)],
+            "needs_config": spec.needs_config,
+        }));
+    }
+    serde_json::Value::Object(verbs)
+}
+
+pub fn parser_manifest() -> serde_json::Value {
+    json!({
+        "commands": COMMANDS.iter().map(|spec| json!({"name": spec.name, "flags": spec.flags})).collect::<Vec<_>>(),
+        "global_flags": ["--config", "--json", "--no-color", "--color", "--help", "--version"],
+    })
 }
 
 #[cfg(test)]

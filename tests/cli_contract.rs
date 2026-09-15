@@ -53,3 +53,16 @@ fn help_and_version_need_no_project_config() {
         assert_eq!(json(&output)["ok"], true);
     }
 }
+
+#[test]
+fn schema_and_robot_docs_are_registry_backed() {
+    let schema = run(&["schema", "--command=check", "--json"]);
+    assert!(schema.status.success());
+    assert!(json(&schema)["data"]["schemas"].get("check").is_some());
+
+    let guide = run(&["robot-docs", "guide", "--json"]);
+    assert!(guide.status.success());
+    let text = json(&guide)["data"]["guide"].as_str().unwrap().to_string();
+    assert!(text.contains("capabilities"));
+    assert!(text.contains("robot-docs"));
+}

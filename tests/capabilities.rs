@@ -43,10 +43,10 @@ fn commands_and_verbs_agree() {
     for c in commands {
         assert!(verbs.contains_key(c), "verbs is missing `{c}`");
     }
-    // capture is the one verb that needs a contract.
-    assert_eq!(verbs["capture"]["needs_contract"], Value::Bool(true));
-    assert_eq!(verbs["check"]["needs_contract"], Value::Bool(false));
-    assert_eq!(verbs["release"]["needs_contract"], Value::Bool(false));
+    assert_eq!(verbs["capture"]["needs_config"], Value::Bool(true));
+    assert_eq!(verbs["check"]["needs_config"], Value::Bool(true));
+    assert_eq!(verbs["capabilities"]["needs_config"], Value::Bool(false));
+    assert!(env["data"]["parser_manifest"].is_object());
 }
 
 #[test]
