@@ -12,8 +12,81 @@ pub enum Verb {
     Release,
     Capabilities,
     Schema,
+    Config,
     RobotDocs,
 }
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ConfigAction {
+    Schema,
+    Validate,
+    Show,
+    Get,
+    Set,
+    Patch,
+}
+
+impl ConfigAction {
+    fn parse(value: &str) -> Option<Self> {
+        CONFIG_ACTIONS
+            .iter()
+            .find(|spec| spec.name == value)
+            .map(|spec| spec.action)
+    }
+}
+
+pub struct ConfigActionSpec {
+    pub action: ConfigAction,
+    pub name: &'static str,
+    pub mutates: bool,
+    pub positionals: &'static [&'static str],
+    pub flags: &'static [&'static str],
+}
+
+pub const CONFIG_ACTIONS: &[ConfigActionSpec] = &[
+    ConfigActionSpec {
+        action: ConfigAction::Schema,
+        name: "schema",
+        mutates: false,
+        positionals: &[],
+        flags: &[],
+    },
+    ConfigActionSpec {
+        action: ConfigAction::Validate,
+        name: "validate",
+        mutates: false,
+        positionals: &[],
+        flags: &[],
+    },
+    ConfigActionSpec {
+        action: ConfigAction::Show,
+        name: "show",
+        mutates: false,
+        positionals: &[],
+        flags: &[],
+    },
+    ConfigActionSpec {
+        action: ConfigAction::Get,
+        name: "get",
+        mutates: false,
+        positionals: &["json-pointer"],
+        flags: &[],
+    },
+    ConfigActionSpec {
+        action: ConfigAction::Set,
+        name: "set",
+        mutates: true,
+        positionals: &["json-pointer", "json-value"],
+        flags: &["--yes", "--if-match"],
+    },
+    ConfigActionSpec {
+        action: ConfigAction::Patch,
+        name: "patch",
+        mutates: true,
+        positionals: &[],
+        flags: &["--from-stdin", "--yes", "--if-match"],
+    },
+];
 
 /// The initial registry is the only list of command names and local flags.
 /// Later slices add nested verbs and payload schemas without a second parser
@@ -70,6 +143,13 @@ pub const COMMANDS: &[CommandSpec] = &[
         needs_config: false,
     },
     CommandSpec {
+        verb: Verb::Config,
+        name: "config",
+        summary: "inspect or safely change the selected configuration",
+        flags: &["--yes", "--if-match", "--from-stdin"],
+        needs_config: false,
+    },
+    CommandSpec {
         verb: Verb::RobotDocs,
         name: "robot-docs",
         summary: "render the agent workflow guide",
@@ -91,18 +171,22 @@ impl Verb {
 pub struct Invocation {
     pub verb: Option<Verb>,
     pub json: bool,
-    pub config_path: PathBuf,
+    pub config_path: Option<PathBuf>,
     pub capture_check: bool,
     pub help: bool,
     pub version: bool,
     pub schema_command: Option<String>,
     pub robot_docs_guide: bool,
     pub yes: bool,
+    pub config_action: Option<ConfigAction>,
+    pub config_arguments: Vec<String>,
+    pub if_match: Option<String>,
+    pub from_stdin: bool,
 }
 
 pub fn parse(args: &[String]) -> Result<Invocation, Diagnostic> {
     let mut json = false;
-    let mut config_path = PathBuf::from("plumbline.json");
+    let mut config_path = None;
     let mut color_seen = false;
     let mut no_color = false;
     let mut help = false;
@@ -112,6 +196,10 @@ pub fn parse(args: &[String]) -> Result<Invocation, Diagnostic> {
     let mut schema_command = None;
     let mut robot_docs_guide = false;
     let mut yes = false;
+    let mut config_action = None;
+    let mut config_arguments = Vec::new();
+    let mut if_match = None;
+    let mut from_stdin = false;
     let mut raw = false;
     let mut i = 0;
 
@@ -152,7 +240,7 @@ pub fn parse(args: &[String]) -> Result<Invocation, Diagnostic> {
             }
             color_seen = true;
         } else if token == "--config" || token.starts_with("--config=") {
-            config_path = PathBuf::from(value(token, args, &mut i, "--config")?);
+            config_path = Some(PathBuf::from(value(token, args, &mut i, "--config")?));
         } else if token == "--command" || token.starts_with("--command=") {
             if verb != Some(Verb::Schema) || schema_command.is_some() {
                 return Err(Diagnostic::new(
@@ -170,13 +258,34 @@ pub fn parse(args: &[String]) -> Result<Invocation, Diagnostic> {
             }
             capture_check = true;
         } else if token == "--yes" || token == "-y" {
-            if !matches!(verb, Some(Verb::Capture | Verb::Release)) || yes {
+            if !matches!(verb, Some(Verb::Capture | Verb::Release))
+                && !matches!(config_action, Some(ConfigAction::Set | ConfigAction::Patch))
+                || yes
+            {
                 return Err(Diagnostic::new(
                     codes::UNKNOWN_FLAG,
-                    "--yes is declared only once for capture or release",
+                    "--yes is declared only once for a mutating command",
                 ));
             }
             yes = true;
+        } else if token == "--if-match" || token.starts_with("--if-match=") {
+            if !matches!(config_action, Some(ConfigAction::Set | ConfigAction::Patch))
+                || if_match.is_some()
+            {
+                return Err(Diagnostic::new(
+                    codes::UNKNOWN_FLAG,
+                    "--if-match is declared only once for config set or patch",
+                ));
+            }
+            if_match = Some(value(token, args, &mut i, "--if-match")?);
+        } else if token == "--from-stdin" {
+            if config_action != Some(ConfigAction::Patch) || from_stdin {
+                return Err(Diagnostic::new(
+                    codes::UNKNOWN_FLAG,
+                    "--from-stdin is declared only once for config patch",
+                ));
+            }
+            from_stdin = true;
         } else if token.starts_with('-') {
             return Err(Diagnostic::new(
                 codes::UNKNOWN_FLAG,
@@ -192,6 +301,16 @@ pub fn parse(args: &[String]) -> Result<Invocation, Diagnostic> {
             }
         } else if verb == Some(Verb::RobotDocs) && token == "guide" && !robot_docs_guide {
             robot_docs_guide = true;
+        } else if verb == Some(Verb::Config) && config_action.is_none() {
+            config_action = ConfigAction::parse(token);
+            if config_action.is_none() {
+                return Err(Diagnostic::new(
+                    codes::INVALID_INPUT,
+                    format!("unknown config command `{token}`"),
+                ));
+            }
+        } else if verb == Some(Verb::Config) {
+            config_arguments.push(token.clone());
         } else {
             return Err(Diagnostic::new(
                 codes::INVALID_INPUT,
@@ -216,6 +335,10 @@ pub fn parse(args: &[String]) -> Result<Invocation, Diagnostic> {
         schema_command,
         robot_docs_guide,
         yes,
+        config_action,
+        config_arguments,
+        if_match,
+        from_stdin,
     })
 }
 
@@ -254,7 +377,7 @@ pub fn terse_help() -> String {
 pub fn capability_verbs() -> serde_json::Value {
     let mut verbs = serde_json::Map::new();
     for spec in COMMANDS {
-        verbs.insert(spec.name.to_string(), json!({
+        let mut value = json!({
             "description": spec.summary,
             "mutates": matches!(spec.verb, Verb::Capture | Verb::Release),
             "positionals": [],
@@ -265,14 +388,32 @@ pub fn capability_verbs() -> serde_json::Value {
             "meta_fields": ["request_id", "ts_iso", "elapsed_ms", "contract_version", "schema_version"],
             "examples": [format!("plumb {} --json", spec.name)],
             "needs_config": spec.needs_config,
-        }));
+        });
+        if spec.verb == Verb::Config {
+            value["subcommands"] = json!(CONFIG_ACTIONS
+                .iter()
+                .map(|action| json!({
+                    "name": action.name,
+                    "mutates": action.mutates,
+                    "positionals": action.positionals,
+                    "flags": action.flags,
+                }))
+                .collect::<Vec<_>>());
+        }
+        verbs.insert(spec.name.to_string(), value);
     }
     serde_json::Value::Object(verbs)
 }
 
 pub fn parser_manifest() -> serde_json::Value {
     json!({
-        "commands": COMMANDS.iter().map(|spec| json!({"name": spec.name, "flags": spec.flags})).collect::<Vec<_>>(),
+        "commands": COMMANDS.iter().map(|spec| json!({
+            "name": spec.name,
+            "flags": spec.flags,
+            "subcommands": if spec.verb == Verb::Config {
+                Some(CONFIG_ACTIONS.iter().map(|action| action.name).collect::<Vec<_>>())
+            } else { None },
+        })).collect::<Vec<_>>(),
         "global_flags": ["--config", "--json", "--no-color", "--color", "--help", "--version"],
     })
 }
@@ -290,7 +431,7 @@ mod tests {
         let before = parse(&strings(&["--json", "--config=a.json", "check"])).unwrap();
         let after = parse(&strings(&["check", "--config=a.json", "--json"])).unwrap();
         assert_eq!(before.verb, Some(Verb::Check));
-        assert_eq!(after.config_path, PathBuf::from("a.json"));
+        assert_eq!(after.config_path, Some(PathBuf::from("a.json")));
     }
 
     #[test]
@@ -317,6 +458,29 @@ mod tests {
         assert!(parse(&strings(&["release", "-y"])).unwrap().yes);
         assert_eq!(
             parse(&strings(&["check", "--yes"])).unwrap_err().code.name,
+            "UNKNOWN_FLAG"
+        );
+    }
+
+    #[test]
+    fn config_mutation_flags_follow_the_config_action() {
+        let parsed = parse(&strings(&[
+            "config",
+            "set",
+            "/release/branch",
+            "\"main\"",
+            "--yes",
+            "--if-match=abc",
+        ]))
+        .unwrap();
+        assert_eq!(parsed.config_action, Some(ConfigAction::Set));
+        assert!(parsed.yes);
+        assert_eq!(parsed.if_match.as_deref(), Some("abc"));
+        assert_eq!(
+            parse(&strings(&["config", "show", "--yes"]))
+                .unwrap_err()
+                .code
+                .name,
             "UNKNOWN_FLAG"
         );
     }

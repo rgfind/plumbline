@@ -10,7 +10,8 @@
 //!   preflight  the publish stop-sign: run every gate that must hold at
 //!              `cargo publish` and exit non-zero unless all pass.
 
-use crate::config::{Capture, Config};
+use crate::cli::ConfigAction;
+use crate::config::{self, Capture, Config};
 use crate::diagnostic::{codes, Diagnostic};
 use crate::engine;
 use crate::markers::{extract_generated, generated_ids, replace_generated};
@@ -477,7 +478,15 @@ pub fn cmd_schema(command: Option<&str>) -> Result<CommandResult, Diagnostic> {
     let verbs = crate::cli::capability_verbs();
     if let Some(command) = command {
         if verbs.get(command).is_none() {
-            return Err(Diagnostic::new(codes::INVALID_INPUT, format!("unknown command schema `{command}`; valid commands are check, capture, preflight, release, capabilities, schema, and robot-docs")));
+            let valid = crate::cli::COMMANDS
+                .iter()
+                .map(|spec| spec.name)
+                .collect::<Vec<_>>()
+                .join(", ");
+            return Err(Diagnostic::new(
+                codes::INVALID_INPUT,
+                format!("unknown command schema `{command}`; valid commands are {valid}"),
+            ));
         }
     }
     let selected = command
@@ -501,4 +510,194 @@ pub fn cmd_robot_docs() -> Result<CommandResult, Diagnostic> {
         .join(", ");
     let guide = format!("# plumb agent guide\n\n1. Run `plumb capabilities --json` to discover commands.\n2. Run `plumb check` before a capture.\n3. Use `plumb capture --check` to compare fresh output.\n4. Read `plumb preflight --json` gate results before release.\n5. Use `plumb release --dry-run` when it is available.\n6. Branch on the declared exit code.\n7. Run `plumb conformance --json` when it is available.\n\nDeclared commands: {names}.");
     Ok(CommandResult::new(json!({"guide": guide}), guide))
+}
+
+/// Run one declared configuration command. This is kept separate from product
+/// commands because config inspection must work even when the document has no
+/// capture or release settings.
+pub fn cmd_config(
+    action: Option<ConfigAction>,
+    arguments: &[String],
+    yes: bool,
+    if_match: Option<&str>,
+    from_stdin: bool,
+    explicit_path: Option<&Path>,
+) -> Result<CommandResult, Diagnostic> {
+    let action = action.ok_or_else(|| {
+        Diagnostic::new(
+            codes::MISSING_REQUIRED,
+            "config requires one of: schema, validate, show, get, set, or patch",
+        )
+    })?;
+    if action == ConfigAction::Schema {
+        if !arguments.is_empty() {
+            return Err(Diagnostic::new(
+                codes::INVALID_INPUT,
+                "config schema accepts no arguments",
+            ));
+        }
+        return Ok(CommandResult::new(
+            json!({"operation": "config schema", "schema": config::config_schema()}),
+            "plumb config schema: use --json for the JSON Schema",
+        ));
+    }
+
+    let cwd = std::env::current_dir().map_err(|e| {
+        Diagnostic::new(
+            codes::WORKDIR_UNREADABLE,
+            format!("cannot determine working directory: {e}"),
+        )
+    })?;
+    let cfg = Config::load_selected(explicit_path, cwd)?;
+    match action {
+        ConfigAction::Schema => unreachable!(),
+        ConfigAction::Validate => {
+            no_arguments(arguments, "config validate")?;
+            Ok(config_result(
+                "validate",
+                &cfg,
+                json!({"valid": true}),
+                "configuration is valid",
+            ))
+        }
+        ConfigAction::Show => {
+            no_arguments(arguments, "config show")?;
+            let provenance = cfg
+                .document
+                .as_object()
+                .map(|fields| {
+                    fields
+                        .keys()
+                        .map(|key| (format!("/{key}"), Value::String("file".into())))
+                        .collect::<serde_json::Map<_, _>>()
+                })
+                .unwrap_or_default();
+            Ok(config_result(
+                "show",
+                &cfg,
+                json!({"config": cfg.document, "provenance": provenance}),
+                "configuration loaded",
+            ))
+        }
+        ConfigAction::Get => {
+            if arguments.len() != 1 {
+                return Err(Diagnostic::new(
+                    codes::MISSING_REQUIRED,
+                    "config get requires one JSON Pointer",
+                ));
+            }
+            let pointer = &arguments[0];
+            let value = config::pointer_get(&cfg.document, pointer)?.clone();
+            Ok(config_result(
+                "get",
+                &cfg,
+                json!({"pointer": pointer, "value": value, "provenance": cfg.provenance(pointer)}),
+                "configuration value loaded",
+            ))
+        }
+        ConfigAction::Set => {
+            if arguments.len() != 2 {
+                return Err(Diagnostic::new(
+                    codes::MISSING_REQUIRED,
+                    "config set requires a JSON Pointer and one JSON value",
+                ));
+            }
+            let replacement = serde_json::from_str(&arguments[1]).map_err(|e| {
+                Diagnostic::new(
+                    codes::INVALID_INPUT,
+                    format!("config set value is not valid JSON: {e}"),
+                )
+            })?;
+            mutate_config(&cfg, yes, if_match, |document| {
+                config::pointer_set(document, &arguments[0], replacement)
+            })
+        }
+        ConfigAction::Patch => {
+            no_arguments(arguments, "config patch")?;
+            if !from_stdin {
+                return Err(Diagnostic::new(
+                    codes::MISSING_REQUIRED,
+                    "config patch requires --from-stdin",
+                ));
+            }
+            let patch = config::read_stdin_patch()?;
+            mutate_config(&cfg, yes, if_match, |document| {
+                config::merge_patch(document, &patch);
+                Ok(())
+            })
+        }
+    }
+}
+
+fn no_arguments(arguments: &[String], command: &str) -> Result<(), Diagnostic> {
+    if arguments.is_empty() {
+        Ok(())
+    } else {
+        Err(Diagnostic::new(
+            codes::INVALID_INPUT,
+            format!("{command} accepts no arguments"),
+        ))
+    }
+}
+
+fn config_result(operation: &str, cfg: &Config, data: Value, human: &str) -> CommandResult {
+    CommandResult::new(
+        json!({
+            "operation": format!("config {operation}"),
+            "config_path": cfg.path,
+            "crate_root": cfg.root,
+            "selection_source": cfg.selection_source.as_str(),
+            "config_hash": cfg.config_hash,
+            "data": data,
+        }),
+        format!("config {operation}: {human}"),
+    )
+}
+
+fn mutate_config(
+    cfg: &Config,
+    yes: bool,
+    if_match: Option<&str>,
+    mutate: impl FnOnce(&mut Value) -> Result<(), Diagnostic>,
+) -> Result<CommandResult, Diagnostic> {
+    if !yes {
+        return Err(Diagnostic::new(
+            codes::MISSING_REQUIRED,
+            "config mutation needs --yes",
+        ));
+    }
+    let expected = if_match.ok_or_else(|| {
+        Diagnostic::new(
+            codes::MISSING_REQUIRED,
+            "config mutation needs --if-match=<config-hash>",
+        )
+    })?;
+    let _lock = config::ConfigLock::acquire(&cfg.path)?;
+    let mut current = Config::load(&cfg.path, cfg.root.clone())?;
+    current.selection_source = cfg.selection_source;
+    if expected != current.config_hash {
+        return Err(Diagnostic::new(codes::CONFIG_WRITE_CONFLICT, format!("config hash changed: expected `{expected}`, observed `{}`; run `plumb config show --json` and retry", current.config_hash)));
+    }
+    let mut document = current.document.clone();
+    mutate(&mut document)?;
+    let updated = Config::validate_document(
+        current.path.clone(),
+        current.root.clone(),
+        current.selection_source,
+        document,
+    )?;
+    let already_complete = updated.config_hash == current.config_hash;
+    if !already_complete {
+        config::write_document(&current.path, &updated.document)?;
+    }
+    Ok(config_result(
+        "write",
+        &updated,
+        json!({"already_complete": already_complete, "config_hash": updated.config_hash}),
+        if already_complete {
+            "configuration already had the requested value"
+        } else {
+            "configuration updated"
+        },
+    ))
 }

@@ -64,13 +64,21 @@ fn main() -> ExitCode {
         match invocation.verb.expect("checked above") {
             cli::Verb::Capabilities => commands::cmd_capabilities(),
             cli::Verb::Schema => commands::cmd_schema(invocation.schema_command.as_deref()),
+            cli::Verb::Config => commands::cmd_config(
+                invocation.config_action,
+                &invocation.config_arguments,
+                invocation.yes,
+                invocation.if_match.as_deref(),
+                invocation.from_stdin,
+                invocation.config_path.as_deref(),
+            ),
             cli::Verb::RobotDocs => {
                 if invocation.robot_docs_guide { commands::cmd_robot_docs() }
                 else { Err(diagnostic::Diagnostic::new(diagnostic::codes::MISSING_REQUIRED, "robot-docs requires the `guide` section")) }
             }
             verb => {
                 let root = std::env::current_dir().map_err(|e| diagnostic::Diagnostic::new(diagnostic::codes::WORKDIR_UNREADABLE, format!("cannot determine working directory: {e}")))?;
-                let cfg = Config::load(&invocation.config_path, root)?;
+                let cfg = Config::load_selected(invocation.config_path.as_deref(), root)?;
                 match verb {
                     cli::Verb::Check => commands::cmd_check(&cfg),
                     cli::Verb::Capture if invocation.capture_check && invocation.yes => Err(diagnostic::Diagnostic::new(diagnostic::codes::INVALID_INPUT, "capture accepts exactly one mode: --check or --yes")),
@@ -80,7 +88,7 @@ fn main() -> ExitCode {
                     cli::Verb::Release if !invocation.yes => Err(diagnostic::Diagnostic::new(diagnostic::codes::MISSING_REQUIRED, "release needs --yes")),
                     cli::Verb::Release => commands::cmd_release(&cfg),
                     cli::Verb::Capabilities => unreachable!(),
-                    cli::Verb::Schema | cli::Verb::RobotDocs => unreachable!(),
+                    cli::Verb::Schema | cli::Verb::Config | cli::Verb::RobotDocs => unreachable!(),
                 }
             }
         }

@@ -6,7 +6,9 @@
 
 use crate::diagnostic::{codes, Diagnostic};
 use serde_json::Value;
+use sha2::{Digest, Sha256};
 use std::collections::BTreeMap;
+use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 
 /// The whole config, loaded from a single JSON file.
@@ -14,6 +16,14 @@ pub struct Config {
     /// The crate root: the directory `plumb` runs in. All relative paths in the
     /// config resolve here, so the config file itself can live anywhere.
     pub root: PathBuf,
+    /// The exact file selected for this command.
+    pub path: PathBuf,
+    /// The selection rule that chose `path`.
+    pub selection_source: SelectionSource,
+    /// The parsed effective JSON document. Config commands expose and edit it.
+    pub document: Value,
+    /// SHA-256 of canonical JSON for `document`.
+    pub config_hash: String,
     /// How to build and capture the contract envelope. `None` when the crate
     /// has no machine-readable contract to capture (plumbline itself is such a
     /// crate); the contract-dependent gates are then skipped.
@@ -35,6 +45,23 @@ pub struct Config {
     /// Settings that identify the branch and remote a release may publish.
     /// Absent is valid for commands that do not release a crate.
     pub release: Option<Release>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SelectionSource {
+    CommandLine,
+    Environment,
+    Default,
+}
+
+impl SelectionSource {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::CommandLine => "command_line",
+            Self::Environment => "environment",
+            Self::Default => "default",
+        }
+    }
 }
 
 /// The repository destination a release command is allowed to use.
@@ -89,25 +116,73 @@ impl Config {
             )
         })?;
 
+        Self::from_document(path.to_path_buf(), root, SelectionSource::CommandLine, doc)
+    }
+
+    /// Select one configuration file. An explicit command flag has precedence
+    /// over `PLUMB_CONFIG`, which has precedence over `./plumbline.json`.
+    pub fn load_selected(explicit: Option<&Path>, cwd: PathBuf) -> Result<Config, Diagnostic> {
+        let (candidate, source) = if let Some(path) = explicit {
+            (path.to_path_buf(), SelectionSource::CommandLine)
+        } else if let Some(path) = std::env::var_os("PLUMB_CONFIG") {
+            (PathBuf::from(path), SelectionSource::Environment)
+        } else {
+            (PathBuf::from("plumbline.json"), SelectionSource::Default)
+        };
+        let path = if candidate.is_absolute() {
+            candidate
+        } else {
+            cwd.join(candidate)
+        };
+        let text = std::fs::read_to_string(&path).map_err(|e| {
+            Diagnostic::new(
+                codes::CONFIG_UNREADABLE,
+                format!("cannot read config `{}`: {e}", path.display()),
+            )
+        })?;
+        let doc = serde_json::from_str(&text).map_err(|e| {
+            Diagnostic::new(
+                codes::CONFIG_INVALID_JSON,
+                format!("config `{}` is not valid JSON: {e}", path.display()),
+            )
+        })?;
+        let root = path.parent().unwrap_or(&cwd).to_path_buf();
+        Self::from_document(path, root, source, doc)
+    }
+
+    fn from_document(
+        path: PathBuf,
+        root: PathBuf,
+        selection_source: SelectionSource,
+        doc: Value,
+    ) -> Result<Config, Diagnostic> {
+        if !doc.is_object() {
+            return Err(Diagnostic::new(
+                codes::CONFIG_SCHEMA,
+                "the configuration root must be an object",
+            ));
+        }
+        validate_top_level(&doc)?;
+
         // A `capture` block is optional. When present it must be complete
         // (build + command); a declared-but-empty block is an error, not "no
         // capture". Absent means the crate has no contract to capture.
         let capture = match doc.get("capture") {
-            Some(c) if c.is_object() => Some(Capture {
+            Some(c) => Some(Capture {
                 build: str_vec(&c["build"], "capture.build")?,
                 command: str_vec(&c["command"], "capture.command")?,
                 env: str_map(&c["env"], "capture.env")?,
             }),
-            _ => None,
+            None => None,
         };
 
-        let fixture = doc["fixture"].as_str().map(str::to_string);
-        let normalize_meta = opt_str_vec(&doc["normalize_meta"]);
-        let claims = doc["claims"].as_array().cloned().unwrap_or_default();
-        let surfaces = opt_str_vec(&doc["surfaces"]);
+        let fixture = optional_string(&doc, "fixture")?;
+        let normalize_meta = optional_str_vec(&doc, "normalize_meta")?;
+        let claims = optional_array(&doc, "claims")?;
+        let surfaces = optional_str_vec(&doc, "surfaces")?;
 
         let mut generated = Vec::new();
-        if let Some(items) = doc["generated"].as_array() {
+        if let Some(items) = doc.get("generated").and_then(Value::as_array) {
             for (i, g) in items.iter().enumerate() {
                 generated.push(parse_generated(g, i)?);
             }
@@ -131,10 +206,8 @@ impl Config {
             ));
         }
 
-        let package_allowlist = doc["package_allowlist"]
-            .as_str()
-            .unwrap_or("cargo-include")
-            .to_string();
+        let package_allowlist = optional_string(&doc, "package_allowlist")?
+            .unwrap_or_else(|| "cargo-include".to_string());
 
         // Release settings are optional so existing project configurations stay
         // valid. If a project declares this block, however, its destination
@@ -155,8 +228,13 @@ impl Config {
             }
         };
 
+        let config_hash = canonical_hash(&doc);
         Ok(Config {
             root,
+            path,
+            selection_source,
+            document: doc,
+            config_hash,
             capture,
             fixture,
             normalize_meta,
@@ -167,6 +245,360 @@ impl Config {
             release,
         })
     }
+
+    pub fn validate_document(
+        path: PathBuf,
+        root: PathBuf,
+        selection_source: SelectionSource,
+        document: Value,
+    ) -> Result<Config, Diagnostic> {
+        Self::from_document(path, root, selection_source, document)
+    }
+
+    /// Return the source of the top-level field addressed by a JSON pointer.
+    /// Values inherit the provenance of their top-level configuration field.
+    pub fn provenance(&self, pointer: &str) -> &'static str {
+        let top = pointer
+            .trim_start_matches('/')
+            .split('/')
+            .next()
+            .unwrap_or("");
+        if self.document.get(top).is_some() {
+            "file"
+        } else {
+            "default"
+        }
+    }
+}
+
+const TOP_LEVEL_FIELDS: &[&str] = &[
+    "capture",
+    "claims",
+    "config_version",
+    "fixture",
+    "generated",
+    "normalize_meta",
+    "package_allowlist",
+    "release",
+    "surfaces",
+];
+
+fn validate_top_level(doc: &Value) -> Result<(), Diagnostic> {
+    let fields = doc.as_object().expect("object was checked");
+    for key in fields.keys() {
+        if !TOP_LEVEL_FIELDS.contains(&key.as_str()) {
+            return Err(Diagnostic::new(
+                codes::CONFIG_SCHEMA,
+                format!(
+                    "unknown config field `/{key}`; legal fields are {}",
+                    TOP_LEVEL_FIELDS.join(", ")
+                ),
+            ));
+        }
+    }
+    if let Some(version) = fields.get("config_version") {
+        if version.as_u64() != Some(1) {
+            return Err(Diagnostic::new(
+                codes::CONFIG_SCHEMA,
+                "`config_version` must be integer 1",
+            ));
+        }
+    }
+    if let Some(value) = fields.get("capture") {
+        if !value.is_object() {
+            return Err(Diagnostic::new(
+                codes::CONFIG_SCHEMA,
+                "`capture` must be an object",
+            ));
+        }
+    }
+    if let Some(value) = fields.get("generated") {
+        if !value.is_array() {
+            return Err(Diagnostic::new(
+                codes::CONFIG_SCHEMA,
+                "`generated` must be an array",
+            ));
+        }
+    }
+    Ok(())
+}
+
+fn optional_string(doc: &Value, field: &str) -> Result<Option<String>, Diagnostic> {
+    match doc.get(field) {
+        None => Ok(None),
+        Some(value) => value.as_str().map(str::to_string).map(Some).ok_or_else(|| {
+            Diagnostic::new(codes::CONFIG_SCHEMA, format!("`{field}` must be a string"))
+        }),
+    }
+}
+
+fn optional_array(doc: &Value, field: &str) -> Result<Vec<Value>, Diagnostic> {
+    match doc.get(field) {
+        None => Ok(Vec::new()),
+        Some(value) => value.as_array().cloned().ok_or_else(|| {
+            Diagnostic::new(codes::CONFIG_SCHEMA, format!("`{field}` must be an array"))
+        }),
+    }
+}
+
+fn optional_str_vec(doc: &Value, field: &str) -> Result<Vec<String>, Diagnostic> {
+    match doc.get(field) {
+        None => Ok(Vec::new()),
+        Some(value) => str_vec(value, field),
+    }
+}
+
+pub fn canonical_json(value: &Value) -> String {
+    match value {
+        Value::Null => "null".into(),
+        Value::Bool(value) => value.to_string(),
+        Value::Number(value) => value.to_string(),
+        Value::String(value) => serde_json::to_string(value).expect("serialize JSON string"),
+        Value::Array(values) => format!(
+            "[{}]",
+            values
+                .iter()
+                .map(canonical_json)
+                .collect::<Vec<_>>()
+                .join(",")
+        ),
+        Value::Object(values) => {
+            let mut entries = values.iter().collect::<Vec<_>>();
+            entries.sort_by(|(left, _), (right, _)| left.cmp(right));
+            format!(
+                "{{{}}}",
+                entries
+                    .into_iter()
+                    .map(|(key, value)| format!(
+                        "{}:{}",
+                        serde_json::to_string(key).expect("serialize JSON key"),
+                        canonical_json(value)
+                    ))
+                    .collect::<Vec<_>>()
+                    .join(",")
+            )
+        }
+    }
+}
+
+pub fn canonical_hash(value: &Value) -> String {
+    format!("{:x}", Sha256::digest(canonical_json(value).as_bytes()))
+}
+
+pub fn config_schema() -> Value {
+    serde_json::json!({
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+            "config_version": {"type": "integer", "const": 1},
+            "capture": {"type": "object"}, "fixture": {"type": "string"},
+            "normalize_meta": {"type": "array", "items": {"type": "string"}},
+            "claims": {"type": "array"}, "surfaces": {"type": "array", "items": {"type": "string"}},
+            "generated": {"type": "array"}, "package_allowlist": {"type": "string", "enum": ["cargo-include"]},
+            "release": {"type": "object"}
+        },
+        "additionalProperties": false
+    })
+}
+
+pub fn pointer_get<'a>(value: &'a Value, pointer: &str) -> Result<&'a Value, Diagnostic> {
+    if pointer.is_empty() {
+        return Ok(value);
+    }
+    if !pointer.starts_with('/') {
+        return Err(Diagnostic::new(
+            codes::INVALID_INPUT,
+            "JSON Pointer must be empty or start with `/`",
+        ));
+    }
+    let mut current = value;
+    for raw in pointer.trim_start_matches('/').split('/') {
+        let token = decode_pointer_token(raw)?;
+        current = match current {
+            Value::Object(map) => map.get(&token),
+            Value::Array(values) => token
+                .parse::<usize>()
+                .ok()
+                .and_then(|index| values.get(index)),
+            _ => None,
+        }
+        .ok_or_else(|| {
+            Diagnostic::new(
+                codes::NOT_FOUND,
+                format!("JSON Pointer `{pointer}` does not exist"),
+            )
+        })?;
+    }
+    Ok(current)
+}
+
+pub fn pointer_set(value: &mut Value, pointer: &str, replacement: Value) -> Result<(), Diagnostic> {
+    if pointer.is_empty() {
+        *value = replacement;
+        return Ok(());
+    }
+    let (parent, token) = pointer
+        .rsplit_once('/')
+        .ok_or_else(|| Diagnostic::new(codes::INVALID_INPUT, "JSON Pointer must start with `/`"))?;
+    let parent = pointer_get_mut(value, parent)?;
+    let token = decode_pointer_token(token)?;
+    match parent {
+        Value::Object(map) => {
+            map.insert(token, replacement);
+            Ok(())
+        }
+        Value::Array(items) => {
+            let index = token.parse::<usize>().map_err(|_| {
+                Diagnostic::new(
+                    codes::INVALID_INPUT,
+                    "JSON Pointer array index must be a non-negative integer",
+                )
+            })?;
+            if index >= items.len() {
+                return Err(Diagnostic::new(
+                    codes::NOT_FOUND,
+                    format!("JSON Pointer `{pointer}` does not exist"),
+                ));
+            }
+            items[index] = replacement;
+            Ok(())
+        }
+        _ => Err(Diagnostic::new(
+            codes::INVALID_INPUT,
+            "JSON Pointer parent is not a container",
+        )),
+    }
+}
+
+fn pointer_get_mut<'a>(value: &'a mut Value, pointer: &str) -> Result<&'a mut Value, Diagnostic> {
+    if pointer.is_empty() {
+        return Ok(value);
+    }
+    if !pointer.starts_with('/') {
+        return Err(Diagnostic::new(
+            codes::INVALID_INPUT,
+            "JSON Pointer must be empty or start with `/`",
+        ));
+    }
+    let mut current = value;
+    for raw in pointer.trim_start_matches('/').split('/') {
+        let token = decode_pointer_token(raw)?;
+        current = match current {
+            Value::Object(map) => map.get_mut(&token),
+            Value::Array(values) => token
+                .parse::<usize>()
+                .ok()
+                .and_then(|index| values.get_mut(index)),
+            _ => None,
+        }
+        .ok_or_else(|| {
+            Diagnostic::new(
+                codes::NOT_FOUND,
+                format!("JSON Pointer `{pointer}` does not exist"),
+            )
+        })?;
+    }
+    Ok(current)
+}
+
+fn decode_pointer_token(raw: &str) -> Result<String, Diagnostic> {
+    let mut decoded = String::new();
+    let mut chars = raw.chars();
+    while let Some(character) = chars.next() {
+        if character != '~' {
+            decoded.push(character);
+            continue;
+        }
+        match chars.next() {
+            Some('0') => decoded.push('~'),
+            Some('1') => decoded.push('/'),
+            _ => {
+                return Err(Diagnostic::new(
+                    codes::INVALID_INPUT,
+                    "JSON Pointer escape must be `~0` or `~1`",
+                ))
+            }
+        }
+    }
+    Ok(decoded)
+}
+
+pub fn merge_patch(target: &mut Value, patch: &Value) {
+    let Value::Object(patch) = patch else {
+        *target = patch.clone();
+        return;
+    };
+    if !target.is_object() {
+        *target = Value::Object(serde_json::Map::new());
+    }
+    let target = target.as_object_mut().expect("object was installed");
+    for (key, value) in patch {
+        if value.is_null() {
+            target.remove(key);
+        } else {
+            merge_patch(target.entry(key.clone()).or_insert(Value::Null), value);
+        }
+    }
+}
+
+pub struct ConfigLock {
+    path: PathBuf,
+}
+
+impl ConfigLock {
+    pub fn acquire(config_path: &Path) -> Result<Self, Diagnostic> {
+        let name = config_path
+            .file_name()
+            .and_then(|name| name.to_str())
+            .unwrap_or("plumbline.json");
+        let path = config_path.with_file_name(format!(".{name}.plumb.lock"));
+        match std::fs::OpenOptions::new().write(true).create_new(true).open(&path) {
+            Ok(_) => Ok(Self { path }),
+            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => Err(Diagnostic::new(codes::LOCKED, format!("config write lock is busy; retry after removing `{}` only if no writer is active", path.display()))),
+            Err(error) => Err(Diagnostic::new(codes::WRITE_FAILED, format!("create config write lock: {error}"))),
+        }
+    }
+}
+
+impl Drop for ConfigLock {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_file(&self.path);
+    }
+}
+
+pub fn write_document(path: &Path, value: &Value) -> Result<(), Diagnostic> {
+    let text = format!(
+        "{}\n",
+        serde_json::to_string_pretty(value).expect("serialize config")
+    );
+    let name = path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or("plumbline.json");
+    let temp = path.with_file_name(format!(".{name}.plumb-{}.tmp", std::process::id()));
+    let mut file = std::fs::File::create(&temp).map_err(|e| {
+        Diagnostic::new(codes::WRITE_FAILED, format!("create temporary config: {e}"))
+    })?;
+    file.write_all(text.as_bytes()).map_err(|e| {
+        Diagnostic::new(codes::WRITE_FAILED, format!("write temporary config: {e}"))
+    })?;
+    file.sync_all()
+        .map_err(|e| Diagnostic::new(codes::WRITE_FAILED, format!("sync temporary config: {e}")))?;
+    std::fs::rename(&temp, path)
+        .map_err(|e| Diagnostic::new(codes::WRITE_FAILED, format!("replace config: {e}")))
+}
+
+pub fn read_stdin_patch() -> Result<Value, Diagnostic> {
+    let mut text = String::new();
+    std::io::stdin().read_to_string(&mut text).map_err(|e| {
+        Diagnostic::new(codes::INVALID_INPUT, format!("read patch from stdin: {e}"))
+    })?;
+    serde_json::from_str(&text).map_err(|e| {
+        Diagnostic::new(
+            codes::INVALID_INPUT,
+            format!("stdin is not valid JSON Merge Patch: {e}"),
+        )
+    })
 }
 
 fn parse_generated(g: &Value, i: usize) -> Result<Generated, Diagnostic> {
@@ -235,17 +667,6 @@ fn str_vec(v: &Value, field: &str) -> Result<Vec<String>, Diagnostic> {
         );
     }
     Ok(out)
-}
-
-fn opt_str_vec(v: &Value) -> Vec<String> {
-    v.as_array()
-        .map(|a| {
-            a.iter()
-                .filter_map(Value::as_str)
-                .map(str::to_string)
-                .collect()
-        })
-        .unwrap_or_default()
 }
 
 fn str_map(v: &Value, field: &str) -> Result<BTreeMap<String, String>, Diagnostic> {

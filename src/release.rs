@@ -604,7 +604,7 @@ fn changelog_heading_matches(line: &str, version: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::config::{Capture, Generated, Release};
+    use crate::config::{Capture, Generated, Release, SelectionSource};
     use std::collections::VecDeque;
     use std::fs;
     use std::io::ErrorKind;
@@ -751,7 +751,11 @@ mod tests {
 
     fn config(root: PathBuf) -> Config {
         Config {
-            root,
+            root: root.clone(),
+            path: root.join("plumbline.json"),
+            selection_source: SelectionSource::CommandLine,
+            document: serde_json::json!({}),
+            config_hash: "test-config-hash".into(),
             capture: None::<Capture>,
             fixture: None,
             normalize_meta: Vec::new(),
