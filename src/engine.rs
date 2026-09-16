@@ -10,40 +10,16 @@ use serde_json::Value;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-/// Run a build command (e.g. ["cargo","build","--bin","rf"]) in the crate root.
-pub fn run_build(root: &Path, build: &[String]) -> Result<(), Diagnostic> {
-    let (prog, args) = build
-        .split_first()
-        .ok_or_else(|| Diagnostic::new(codes::CONFIG_SCHEMA, "capture.build is empty"))?;
-    let prog = if prog == "cargo" {
-        cargo()
-    } else {
-        prog.clone()
-    };
-    let status = Command::new(&prog)
-        .args(args)
-        .current_dir(root)
-        .status()
-        .map_err(|e| {
-            Diagnostic::new(
-                codes::BUILD_FAILED,
-                format!("run build `{}`: {e}", build.join(" ")),
-            )
-        })?;
-    if status.success() {
-        Ok(())
-    } else {
-        Err(Diagnostic::new(
-            codes::BUILD_FAILED,
-            format!("build `{}` failed", build.join(" ")),
-        ))
-    }
-}
-
 /// Build through Cargo's machine message stream and select the executable that
 /// Cargo itself reports for the requested binary target. This supports
 /// workspaces, profiles, target directories, and platform executable suffixes.
-fn resolve_capture_executable(root: &Path, capture: &Capture) -> Result<PathBuf, Diagnostic> {
+/// Callers that need to run the built binary use the returned path, never the
+/// crate root: rendering a generated block execs this file, and execing the
+/// crate directory instead fails with a permission error.
+pub(crate) fn resolve_capture_executable(
+    root: &Path,
+    capture: &Capture,
+) -> Result<PathBuf, Diagnostic> {
     let (program, original) = capture
         .build
         .split_first()
@@ -156,8 +132,9 @@ pub fn capture_with_executable(
 /// configured env, discards the tree, and returns the fenced block body
 /// (optional prompt line, then the render), ready to sit between markers.
 ///
-/// Precondition: the binary is already built. Callers build once (via
-/// `run_build`) before rendering, so a batch of blocks shares one build.
+/// Precondition: `executable` is the built binary, from
+/// `resolve_capture_executable`, which builds once so a batch of blocks shares
+/// one build. Pass that resolved path, never the crate root.
 pub fn render_block(executable: &Path, gen: &Generated) -> Result<String, Diagnostic> {
     let tree = make_tree(&gen.tree)?;
     let (_, args) = gen

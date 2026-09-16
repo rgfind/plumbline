@@ -453,7 +453,7 @@
         "--version"
       ]
     },
-    "tool_version": "0.0.3",
+    "tool_version": "0.0.4",
     "value_domains": {
       "claim_mode": [
         "value",
@@ -883,13 +883,13 @@
   "errors": [],
   "meta": {
     "contract_version": "0.1",
-    "data_hash": "67b8ac1dce5a576314aeab2f31f77c5c9d2b761e70098c5b4cb7943ae84e169f",
+    "data_hash": "72248a246cf801d01e8d98fc5f46d8fe2ff3bec1199229a3e97d7c6459b8a27c",
     "elapsed_ms": 1,
-    "request_id": "req-14ef8-18d5b0553d6d7708",
+    "request_id": "req-37b2-18d5f1146dd26890",
     "schema_version": 1,
-    "ts_iso": "2026-09-16T03:45:07Z"
+    "ts_iso": "2026-09-16T23:31:36Z"
   },
   "ok": true,
-  "tool_version": "0.0.3",
+  "tool_version": "0.0.4",
   "warnings": []
 }

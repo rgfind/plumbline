@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.0.4 — generated-fresh gate fix
+
+- Render generated blocks from the built binary, not the crate root, so the `generated-fresh` preflight gate stops failing with `RENDER_FAILED: Permission denied`.
+- Add a regression test that builds a real crate and exercises the generated-fresh exec path.
+
 ## 0.0.3 — release verification safety
 
 - Add declared local verification gates and exact GitHub Actions proof for release preflight.

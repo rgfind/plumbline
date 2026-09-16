@@ -534,8 +534,10 @@ fn generated_blocks_fresh(cfg: &Config) -> Result<String, Diagnostic> {
             "generated blocks declared without a `capture`",
         )
     })?;
-    // Build once up front so all blocks render from the same binary.
-    engine::run_build(&cfg.root, &capture.build)?;
+    // Build once up front and resolve the built binary so all blocks render
+    // from it. render_block execs this path; passing the crate root instead
+    // fails with a permission error.
+    let executable = engine::resolve_capture_executable(&cfg.root, capture)?;
     let mut checked = 0usize;
     for gen in &cfg.generated {
         let doc = std::fs::read_to_string(cfg.root.join(&gen.surface)).map_err(|e| {
@@ -550,7 +552,7 @@ fn generated_blocks_fresh(cfg: &Config) -> Result<String, Diagnostic> {
                 format!("{} has no `{}` GENERATED block", gen.surface, gen.id),
             )
         })?;
-        let fresh = engine::render_block(&cfg.root, gen)?;
+        let fresh = engine::render_block(&executable, gen)?;
         if committed != fresh {
             return Err(Diagnostic::new(
                 codes::BLOCK_STALE,
@@ -993,4 +995,68 @@ fn mutate_config(
             "configuration updated"
         },
     ))
+}
+
+#[cfg(test)]
+mod generated_gate_tests {
+    use super::*;
+    use std::fs;
+    use std::path::PathBuf;
+
+    fn temp_crate(tag: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!(
+            "plumbline-gengate-{tag}-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        fs::create_dir_all(dir.join("src")).unwrap();
+        dir
+    }
+
+    // The generated-fresh gate must render from the built binary, not the crate
+    // root. Before the fix it passed the crate directory into render_block, so
+    // it tried to exec a directory and failed with a permission error, making
+    // preflight unpassable for any crate that declares a generated block. This
+    // builds a real one-binary crate, commits the block its binary emits, and
+    // asserts the gate passes.
+    #[test]
+    fn generated_fresh_execs_the_built_binary_not_the_crate_root() {
+        let root = temp_crate("ok");
+        fs::write(
+            root.join("Cargo.toml"),
+            "[package]\nname = \"plumbdemo\"\nversion = \"0.0.0\"\nedition = \"2021\"\n\n[[bin]]\nname = \"plumbdemo\"\npath = \"src/main.rs\"\n\n[workspace]\n",
+        )
+        .unwrap();
+        fs::write(
+            root.join("src/main.rs"),
+            "fn main() { println!(\"hello from plumb test\"); }\n",
+        )
+        .unwrap();
+        fs::write(
+            root.join("README.md"),
+            "# demo\n\n<!-- BEGIN GENERATED:demo -->\n```\nhello from plumb test\n```\n<!-- END GENERATED:demo -->\n",
+        )
+        .unwrap();
+        let config = json!({
+            "capture": {"build": ["cargo", "build", "--bin", "plumbdemo"], "command": ["plumbdemo"]},
+            "surfaces": ["README.md"],
+            "generated": [{
+                "id": "demo", "surface": "README.md",
+                "render": ["plumbdemo"], "tree": {"files": {}}
+            }]
+        });
+        fs::write(
+            root.join("plumbline.json"),
+            serde_json::to_string_pretty(&config).unwrap(),
+        )
+        .unwrap();
+
+        let cfg = Config::load(&root.join("plumbline.json"), root.clone()).expect("load config");
+        let result = generated_blocks_fresh(&cfg);
+        fs::remove_dir_all(&root).ok();
+        assert!(result.is_ok(), "generated-fresh gate failed: {result:?}");
+    }
 }
