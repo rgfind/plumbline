@@ -68,6 +68,28 @@ impl SelectionSource {
 pub struct Release {
     pub branch: String,
     pub remote: String,
+    pub verification: Verification,
+}
+
+/// The complete, ordered verification policy for a release-capable project.
+pub struct Verification {
+    pub ci: Vec<VerificationGate>,
+    pub release: Vec<VerificationGate>,
+    pub github_actions: GitHubActions,
+}
+
+/// One configured command gate. Arguments remain separate values so they can
+/// be executed without parsing or evaluating a shell string.
+pub struct VerificationGate {
+    pub id: String,
+    pub argv: Vec<String>,
+    pub timeout_seconds: u64,
+}
+
+/// The immutable identity of the workflow that supplies release evidence.
+pub struct GitHubActions {
+    pub repository: String,
+    pub workflow_path: String,
 }
 
 /// How to produce the contract envelope from the built binary.
@@ -238,9 +260,11 @@ impl Config {
                         "`release` must be an object",
                     ));
                 }
+                reject_unknown_fields(value, "release", &["branch", "remote", "verification"])?;
                 Some(Release {
                     branch: req_nonempty_str(&value["branch"], "release.branch")?,
                     remote: req_nonempty_str(&value["remote"], "release.remote")?,
+                    verification: parse_verification(&value["verification"])?,
                 })
             }
         };
@@ -340,6 +364,146 @@ fn validate_top_level(doc: &Value) -> Result<(), Diagnostic> {
     Ok(())
 }
 
+fn reject_unknown_fields(value: &Value, scope: &str, allowed: &[&str]) -> Result<(), Diagnostic> {
+    let fields = value.as_object().ok_or_else(|| {
+        Diagnostic::new(codes::CONFIG_SCHEMA, format!("`{scope}` must be an object"))
+    })?;
+    for key in fields.keys() {
+        if !allowed.contains(&key.as_str()) {
+            return Err(Diagnostic::new(
+                codes::CONFIG_SCHEMA,
+                format!(
+                    "unknown config field `{scope}.{key}`; legal fields are {}",
+                    allowed.join(", ")
+                ),
+            ));
+        }
+    }
+    Ok(())
+}
+
+fn parse_verification(value: &Value) -> Result<Verification, Diagnostic> {
+    reject_unknown_fields(
+        value,
+        "release.verification",
+        &["ci", "release", "github_actions"],
+    )?;
+    let ci = parse_gate_list(&value["ci"], "release.verification.ci", "ci")?;
+    let release = parse_gate_list(&value["release"], "release.verification.release", "release")?;
+    let mut ids = std::collections::BTreeSet::new();
+    for gate in ci.iter().chain(release.iter()) {
+        if !ids.insert(gate.id.as_str()) {
+            return Err(Diagnostic::new(
+                codes::CONFIG_SCHEMA,
+                format!(
+                    "release.verification command id `{}` is duplicated",
+                    gate.id
+                ),
+            ));
+        }
+    }
+    let github_actions = &value["github_actions"];
+    reject_unknown_fields(
+        github_actions,
+        "release.verification.github_actions",
+        &["repository", "workflow_path"],
+    )?;
+    let repository = req_nonempty_str(
+        &github_actions["repository"],
+        "release.verification.github_actions.repository",
+    )?;
+    if !valid_repository(&repository) {
+        return Err(Diagnostic::new(
+            codes::CONFIG_SCHEMA,
+            "`release.verification.github_actions.repository` must be owner/repository using GitHub-safe names",
+        ));
+    }
+    let workflow_path = req_nonempty_str(
+        &github_actions["workflow_path"],
+        "release.verification.github_actions.workflow_path",
+    )?;
+    if !workflow_path.starts_with(".github/workflows/")
+        || !(workflow_path.ends_with(".yml") || workflow_path.ends_with(".yaml"))
+    {
+        return Err(Diagnostic::new(
+            codes::CONFIG_SCHEMA,
+            "`release.verification.github_actions.workflow_path` must name a .github/workflows/*.yml or *.yaml file",
+        ));
+    }
+    Ok(Verification {
+        ci,
+        release,
+        github_actions: GitHubActions {
+            repository,
+            workflow_path,
+        },
+    })
+}
+
+fn parse_gate_list(
+    value: &Value,
+    field: &str,
+    stage: &str,
+) -> Result<Vec<VerificationGate>, Diagnostic> {
+    let list = value.as_array().ok_or_else(|| {
+        Diagnostic::new(
+            codes::CONFIG_SCHEMA,
+            format!("`{field}` must be a non-empty array"),
+        )
+    })?;
+    if list.is_empty() {
+        return Err(Diagnostic::new(
+            codes::CONFIG_SCHEMA,
+            format!("`{field}` must not be empty"),
+        ));
+    }
+    list.iter().enumerate().map(|(index, gate)| {
+        let scope = format!("{field}[{index}]");
+        reject_unknown_fields(gate, &scope, &["id", "argv", "timeout_seconds"])?;
+        let id = req_nonempty_str(&gate["id"], &format!("{scope}.id"))?;
+        if !id.bytes().all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'-') {
+            return Err(Diagnostic::new(codes::CONFIG_SCHEMA, format!("`{scope}.id` must use lower-case ASCII letters, digits, or hyphens")));
+        }
+        let argv = str_vec(&gate["argv"], &format!("{scope}.argv"))?;
+        if argv.is_empty() {
+            return Err(Diagnostic::new(codes::CONFIG_SCHEMA, format!("`{scope}.argv` must not be empty")));
+        }
+        for (argument, value) in argv.iter().enumerate() {
+            if value.is_empty() || value.contains('\0') {
+                return Err(Diagnostic::new(codes::CONFIG_SCHEMA, format!("`{scope}.argv[{argument}]` must be a non-empty string without NUL bytes")));
+            }
+        }
+        if argv[0].contains('/') || argv[0].contains('\\') {
+            return Err(Diagnostic::new(codes::CONFIG_SCHEMA, format!("`{scope}.argv[0]` must be a program name, not a path")));
+        }
+        let timeout_seconds = gate["timeout_seconds"].as_u64().ok_or_else(|| {
+            Diagnostic::new(codes::CONFIG_SCHEMA, format!("`{scope}.timeout_seconds` must be an integer from 1 through 900"))
+        })?;
+        if !(1..=900).contains(&timeout_seconds) {
+            return Err(Diagnostic::new(codes::CONFIG_SCHEMA, format!("`{scope}.timeout_seconds` must be from 1 through 900")));
+        }
+        let _ = stage;
+        Ok(VerificationGate { id, argv, timeout_seconds })
+    }).collect()
+}
+
+fn valid_repository(value: &str) -> bool {
+    let mut pieces = value.split('/');
+    let Some(owner) = pieces.next() else {
+        return false;
+    };
+    let Some(repository) = pieces.next() else {
+        return false;
+    };
+    pieces.next().is_none()
+        && !owner.is_empty()
+        && !repository.is_empty()
+        && [owner, repository].iter().all(|part| {
+            part.bytes()
+                .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b'.'))
+        })
+}
+
 fn optional_string(doc: &Value, field: &str) -> Result<Option<String>, Diagnostic> {
     match doc.get(field) {
         None => Ok(None),
@@ -412,7 +576,20 @@ pub fn config_schema() -> Value {
             "normalize_meta": {"type": "array", "items": {"type": "string"}},
             "claims": {"type": "array"}, "surfaces": {"type": "array", "items": {"type": "string"}},
             "generated": {"type": "array"}, "package_allowlist": {"type": "string", "enum": ["cargo-include"]},
-            "release": {"type": "object"}
+            "release": {
+                "type": "object",
+                "required": ["branch", "remote", "verification"],
+                "additionalProperties": false,
+                "properties": {
+                    "branch": {"type": "string", "minLength": 1},
+                    "remote": {"type": "string", "minLength": 1},
+                    "verification": {
+                        "type": "object",
+                        "required": ["ci", "release", "github_actions"],
+                        "additionalProperties": false
+                    }
+                }
+            }
         },
         "additionalProperties": false
     })
@@ -856,7 +1033,11 @@ mod tests {
                  "tree":{"git_init":true,"files":{"a.py":"x = 1\n"}}}
               ],
               "package_allowlist": "cargo-include",
-              "release": {"branch":"main","remote":"origin"}
+              "release": {"branch":"main","remote":"origin","verification":{
+                "ci":[{"id":"format","argv":["cargo","fmt","--check"],"timeout_seconds":120}],
+                "release":[{"id":"publish","argv":["cargo","publish","--dry-run"],"timeout_seconds":600}],
+                "github_actions":{"repository":"owner/repo","workflow_path":".github/workflows/ci.yml"}
+              }}
             }"#,
         );
         let cfg = Config::load(&p, PathBuf::from(".")).unwrap();
@@ -879,6 +1060,7 @@ mod tests {
         let release = cfg.release.as_ref().unwrap();
         assert_eq!(release.branch, "main");
         assert_eq!(release.remote, "origin");
+        assert_eq!(release.verification.ci[0].id, "format");
     }
 
     #[test]
@@ -939,7 +1121,7 @@ mod tests {
             ),
             (
                 "release-empty.json",
-                r#"{"release":{"branch":"","remote":" "}}"#,
+                r#"{"release":{"branch":"","remote":" ","verification":{}}}"#,
             ),
         ] {
             let p = write_tmp(name, body);
@@ -948,6 +1130,46 @@ mod tests {
                 Err(error) => error,
             };
             assert_eq!(error.code.name, "CONFIG_SCHEMA");
+        }
+    }
+
+    #[test]
+    fn verification_rejects_malformed_gate_and_github_fields() {
+        let valid = r#"{"release":{"branch":"main","remote":"origin","verification":{"ci":[{"id":"format","argv":["cargo","fmt"],"timeout_seconds":120}],"release":[{"id":"publish","argv":["cargo","publish"],"timeout_seconds":600}],"github_actions":{"repository":"owner/repo","workflow_path":".github/workflows/ci.yml"}}}}"#;
+        for (name, replacement) in [
+            ("unknown", "\"unexpected\":true,"),
+            ("empty-list", "\"ci\":[],"),
+            ("duplicate", "\"ci\":[{\"id\":\"same\",\"argv\":[\"cargo\"],\"timeout_seconds\":1}],\"release\":[{\"id\":\"same\",\"argv\":[\"cargo\"],\"timeout_seconds\":1}],"),
+            ("path-program", "\"ci\":[{\"id\":\"format\",\"argv\":[\"./cargo\"],\"timeout_seconds\":1}],"),
+            ("bad-timeout", "\"ci\":[{\"id\":\"format\",\"argv\":[\"cargo\"],\"timeout_seconds\":901}],"),
+            ("bad-repository", "\"github_actions\":{\"repository\":\"owner/repo/extra\",\"workflow_path\":\".github/workflows/ci.yml\"},"),
+            ("bad-workflow", "\"github_actions\":{\"repository\":\"owner/repo\",\"workflow_path\":\"ci.yml\"},"),
+        ] {
+            let body = match name {
+                "unknown" => valid.replacen("\"ci\":", &format!("{replacement}\"ci\":"), 1),
+                "empty-list" => valid.replacen("\"ci\":[{\"id\":\"format\",\"argv\":[\"cargo\",\"fmt\"],\"timeout_seconds\":120}],", replacement, 1),
+                "duplicate" | "path-program" | "bad-timeout" => {
+                    let start = valid.find("\"ci\":").unwrap();
+                    let end = valid.find("\"github_actions\"").unwrap();
+                    format!("{}{}{}", &valid[..start], replacement, &valid[end..])
+                }
+                "bad-repository" | "bad-workflow" => {
+                    let start = valid.find("\"github_actions\":").unwrap();
+                    format!(
+                        "{}{}{}",
+                        &valid[..start],
+                        replacement.trim_end_matches(','),
+                        "}}}"
+                    )
+                }
+                _ => unreachable!(),
+            };
+            let path = write_tmp(name, &body);
+            let error = match Config::load(&path, PathBuf::from(".")) {
+                Ok(_) => panic!("{name} unexpectedly loaded"),
+                Err(error) => error,
+            };
+            assert_eq!(error.code.name, "CONFIG_SCHEMA", "{name}: {}", error.message);
         }
     }
 

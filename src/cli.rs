@@ -8,6 +8,7 @@ use std::path::PathBuf;
 pub enum Verb {
     Check,
     Capture,
+    Verify,
     Preflight,
     Release,
     Capabilities,
@@ -117,6 +118,13 @@ pub const COMMANDS: &[CommandSpec] = &[
         needs_config: true,
     },
     CommandSpec {
+        verb: Verb::Verify,
+        name: "verify",
+        summary: "run declared local verification gates",
+        flags: &["--stage"],
+        needs_config: true,
+    },
+    CommandSpec {
         verb: Verb::Preflight,
         name: "preflight",
         summary: "run the ordered release gates",
@@ -189,6 +197,7 @@ pub struct Invocation {
     pub json: bool,
     pub config_path: Option<PathBuf>,
     pub capture_check: bool,
+    pub verify_stage: Option<VerifyStage>,
     pub help: bool,
     pub version: bool,
     pub schema_command: Option<String>,
@@ -202,6 +211,32 @@ pub struct Invocation {
     pub contract_doc_section: Option<String>,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum VerifyStage {
+    Ci,
+    Release,
+}
+
+impl VerifyStage {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Ci => "ci",
+            Self::Release => "release",
+        }
+    }
+
+    fn parse(value: &str) -> Result<Self, Diagnostic> {
+        match value {
+            "ci" => Ok(Self::Ci),
+            "release" => Ok(Self::Release),
+            _ => Err(Diagnostic::new(
+                codes::INVALID_INPUT,
+                format!("--stage must be one of: ci, release (got `{value}`); try `plumb verify --stage=ci`"),
+            )),
+        }
+    }
+}
+
 pub fn parse(args: &[String]) -> Result<Invocation, Diagnostic> {
     let mut json = false;
     let mut config_path = None;
@@ -210,6 +245,7 @@ pub fn parse(args: &[String]) -> Result<Invocation, Diagnostic> {
     let mut help = false;
     let mut version = false;
     let mut capture_check = false;
+    let mut verify_stage = None;
     let mut verb = None;
     let mut schema_command = None;
     let mut robot_docs_guide = false;
@@ -277,6 +313,14 @@ pub fn parse(args: &[String]) -> Result<Invocation, Diagnostic> {
                 ));
             }
             capture_check = true;
+        } else if token == "--stage" || token.starts_with("--stage=") {
+            if verify_stage.is_some() || matches!(verb, Some(other) if other != Verb::Verify) {
+                return Err(Diagnostic::new(
+                    codes::UNKNOWN_FLAG,
+                    "--stage is declared only once for verify",
+                ));
+            }
+            verify_stage = Some(VerifyStage::parse(&value(token, args, &mut i, "--stage")?)?);
         } else if token == "--yes" || token == "-y" {
             if !matches!(verb, Some(Verb::Capture | Verb::Release))
                 && !matches!(config_action, Some(ConfigAction::Set | ConfigAction::Patch))
@@ -355,11 +399,24 @@ pub fn parse(args: &[String]) -> Result<Invocation, Diagnostic> {
             "select either --no-color or one --color value",
         ));
     }
+    if verify_stage.is_some() && verb != Some(Verb::Verify) {
+        return Err(Diagnostic::new(
+            codes::UNKNOWN_FLAG,
+            "--stage is declared only for verify",
+        ));
+    }
+    if verb == Some(Verb::Verify) && verify_stage.is_none() {
+        return Err(Diagnostic::new(
+            codes::MISSING_REQUIRED,
+            "verify requires --stage=ci or --stage=release; try `plumb verify --stage=ci`",
+        ));
+    }
     Ok(Invocation {
         verb,
         json,
         config_path,
         capture_check,
+        verify_stage,
         help,
         version,
         schema_command,
@@ -415,7 +472,7 @@ pub fn capability_verbs() -> serde_json::Value {
             "positionals": [],
             "flags": spec.flags,
             "output_modes": ["text", "json"],
-            "possible_exit_codes": [0, 1, 2, 3, 4, 5, 6],
+            "possible_exit_codes": possible_exit_codes(spec.verb),
             "payload_schema": {"type": "object"},
             "meta_fields": ["request_id", "ts_iso", "elapsed_ms", "contract_version", "schema_version"],
             "examples": [format!("plumb {} --json", spec.name)],
@@ -435,6 +492,20 @@ pub fn capability_verbs() -> serde_json::Value {
         verbs.insert(spec.name.to_string(), value);
     }
     serde_json::Value::Object(verbs)
+}
+
+fn possible_exit_codes(verb: Verb) -> Vec<u8> {
+    match verb {
+        Verb::Verify => vec![0, 1, 2, 3],
+        Verb::Preflight | Verb::Release => vec![0, 1, 2, 3, 4, 5],
+        Verb::Check | Verb::Capture => vec![0, 1, 2, 3],
+        Verb::Capabilities
+        | Verb::Schema
+        | Verb::Config
+        | Verb::Conformance
+        | Verb::ContractDoc
+        | Verb::RobotDocs => vec![0, 1, 2, 3, 5, 6],
+    }
 }
 
 pub fn parser_manifest() -> serde_json::Value {
@@ -515,5 +586,23 @@ mod tests {
                 .name,
             "UNKNOWN_FLAG"
         );
+    }
+
+    #[test]
+    fn verify_stage_is_required_and_has_a_closed_enum() {
+        let missing = parse(&strings(&["verify"])).unwrap_err();
+        assert_eq!(missing.code.name, "MISSING_REQUIRED");
+        assert!(missing.message.contains("ci"));
+        assert!(missing.message.contains("plumb verify --stage=ci"));
+
+        let invalid = parse(&strings(&["verify", "--stage=ship"])).unwrap_err();
+        assert_eq!(invalid.code.name, "INVALID_INPUT");
+        assert!(invalid.message.contains("ci, release"));
+        assert!(invalid.message.contains("plumb verify --stage=ci"));
+
+        let before = parse(&strings(&["--stage", "ci", "verify"])).unwrap();
+        assert_eq!(before.verify_stage, Some(VerifyStage::Ci));
+        let after = parse(&strings(&["verify", "--stage", "release"])).unwrap();
+        assert_eq!(after.verify_stage, Some(VerifyStage::Release));
     }
 }

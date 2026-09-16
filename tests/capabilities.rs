@@ -36,7 +36,14 @@ fn envelope_is_ok_with_a_data_object() {
 fn commands_and_verbs_agree() {
     let env = capabilities();
     assert_eq!(env["commands"], serde_json::json!([]));
-    let commands = ["check", "capture", "preflight", "release", "capabilities"];
+    let commands = [
+        "check",
+        "capture",
+        "verify",
+        "preflight",
+        "release",
+        "capabilities",
+    ];
 
     // Every top-level command has a detailed entry in data.verbs.
     let verbs = env["data"]["verbs"].as_object().unwrap();
@@ -47,6 +54,10 @@ fn commands_and_verbs_agree() {
     assert_eq!(verbs["check"]["needs_config"], Value::Bool(true));
     assert_eq!(verbs["capabilities"]["needs_config"], Value::Bool(false));
     assert!(env["data"]["parser_manifest"].is_object());
+    assert_eq!(
+        verbs["verify"]["possible_exit_codes"],
+        serde_json::json!([0, 1, 2, 3])
+    );
 }
 
 #[test]

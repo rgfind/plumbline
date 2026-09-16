@@ -110,7 +110,6 @@ where
     let remote_url = remote_url(cfg, runner, &release.remote)?;
 
     preflight()?;
-    dry_run_publish(cfg, runner)?;
 
     run_ok(
         runner,
@@ -168,7 +167,6 @@ where
     let tag = format!("v{version}");
     let state = release_state(cfg, runner, &tag, &release.remote, &release.branch)?;
     preflight()?;
-    dry_run_publish(cfg, runner)?;
     Ok(ReleaseResult {
         version,
         tag,
@@ -535,26 +533,6 @@ fn remote_url<R: CommandRunner>(
     )?))
 }
 
-fn dry_run_publish<R: CommandRunner>(cfg: &Config, runner: &mut R) -> Result<(), Diagnostic> {
-    let out = invoke(
-        runner,
-        &engine::cargo(),
-        &strings(["publish", "--dry-run", "--locked"]),
-        &cfg.root,
-        codes::CARGO_UNAVAILABLE,
-        "run cargo publish --dry-run",
-    )?;
-    if out.success {
-        Ok(())
-    } else {
-        Err(command_failed(
-            codes::PUBLISH_DRY_RUN_FAILED,
-            "cargo publish --dry-run --locked",
-            &out,
-        ))
-    }
-}
-
 fn invoke<R: CommandRunner>(
     runner: &mut R,
     program: &str,
@@ -638,10 +616,11 @@ fn changelog_heading_matches(line: &str, version: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::config::{Capture, Generated, Release, SelectionSource};
+    use crate::config::{
+        Capture, Generated, GitHubActions, Release, SelectionSource, Verification, VerificationGate,
+    };
     use std::collections::VecDeque;
     use std::fs;
-    use std::io::ErrorKind;
     use std::path::PathBuf;
 
     enum Reply {
@@ -651,7 +630,6 @@ mod tests {
             stdout: String,
             stderr: String,
         },
-        StartError,
     }
 
     struct FakeRunner {
@@ -681,7 +659,6 @@ mod tests {
         ) -> Result<RunOutput, io::Error> {
             self.calls.push((program.to_string(), args.to_vec()));
             match self.replies.pop_front().expect("unexpected command") {
-                Reply::StartError => Err(io::Error::new(ErrorKind::NotFound, "not found")),
                 Reply::Output {
                     success,
                     code,
@@ -726,7 +703,6 @@ mod tests {
                     .pop_front()
                     .expect("unexpected cargo command")
                 {
-                    Reply::StartError => Err(io::Error::new(ErrorKind::NotFound, "not found")),
                     Reply::Output {
                         success,
                         code,
@@ -800,6 +776,22 @@ mod tests {
             release: Some(Release {
                 branch: "main".into(),
                 remote: "origin".into(),
+                verification: Verification {
+                    ci: vec![VerificationGate {
+                        id: "format".into(),
+                        argv: vec!["cargo".into(), "fmt".into(), "--check".into()],
+                        timeout_seconds: 120,
+                    }],
+                    release: vec![VerificationGate {
+                        id: "publish-dry-run".into(),
+                        argv: vec!["cargo".into(), "publish".into(), "--dry-run".into()],
+                        timeout_seconds: 600,
+                    }],
+                    github_actions: GitHubActions {
+                        repository: "owner/repo".into(),
+                        workflow_path: ".github/workflows/ci.yml".into(),
+                    },
+                },
             }),
         }
     }
@@ -855,6 +847,11 @@ mod tests {
         let root = test_root(name);
         let remote = root.with_extension("remote.git");
         git(&root, &["init", "-q", "-b", "main"]);
+        git(&root, &["config", "user.name", "Release Test"]);
+        git(
+            &root,
+            &["config", "user.email", "release-test@example.invalid"],
+        );
         fs::write(
             root.join("Cargo.toml"),
             "[package]\nname = \"example\"\nversion = \"1.2.3\"\n",
@@ -903,8 +900,9 @@ mod tests {
 
         assert!(runner.local_tag_created);
         assert!(runner.remote_tag_created);
-        assert!(runner.calls.iter().any(|(program, args)| {
-            program == &engine::cargo() && args == &["publish", "--dry-run", "--locked"]
+        assert!(!runner.calls.iter().any(|(program, args)| {
+            program == &engine::cargo()
+                && args.first().is_some_and(|argument| argument == "publish")
         }));
         assert!(runner.calls.iter().any(|(program, args)| {
             program == "git"
@@ -933,7 +931,6 @@ mod tests {
             ("dirty", 0, ok(" M src/main.rs\n"), codes::WORKTREE_DIRTY),
             ("branch", 1, failed(1), codes::RELEASE_BRANCH_MISMATCH),
             ("upstream", 2, failed(1), codes::UPSTREAM_NOT_SYNCED),
-            ("dry-run", 9, failed(1), codes::PUBLISH_DRY_RUN_FAILED),
         ];
         for (name, position, replacement, expected) in cases {
             let (cfg, mut replies) = prepared(name);
@@ -947,7 +944,7 @@ mod tests {
     }
 
     #[test]
-    fn changelog_preflight_and_cargo_start_failures_have_stable_codes() {
+    fn changelog_and_preflight_failures_have_stable_codes() {
         let cfg = config(test_root("missing-changelog"));
         let mut runner = FakeRunner::new(standard_replies(&cfg));
         let error = run(&cfg, &mut runner, || Ok(())).unwrap_err();
@@ -961,19 +958,12 @@ mod tests {
         .unwrap_err();
         assert_eq!(error.code.name, codes::PREFLIGHT_FAILED.name);
         assert!(!runner.local_tag_created);
-
-        let (cfg, mut replies) = prepared("cargo-start");
-        replies[9] = Reply::StartError;
-        let mut runner = FakeRunner::new(replies);
-        let error = run(&cfg, &mut runner, || Ok(())).unwrap_err();
-        assert_eq!(error.code.name, codes::CARGO_UNAVAILABLE.name);
-        assert!(!runner.local_tag_created);
     }
 
     #[test]
     fn failed_push_keeps_local_tag_and_never_records_remote_tag() {
         let (cfg, mut replies) = prepared("push-failure");
-        replies[11] = failed(1);
+        replies[10] = failed(1);
         let mut runner = FakeRunner::new(replies);
         let error = run(&cfg, &mut runner, || Ok(())).unwrap_err();
         assert_eq!(error.code.name, codes::PUSH_FAILED.name);

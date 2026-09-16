@@ -123,6 +123,7 @@ fn envelope_with_request_id(
             "request_id": request_id,
             "ts_iso": timestamp(),
             "elapsed_ms": elapsed_ms,
+            "data_hash": crate::config::canonical_hash(&data),
             "contract_version": CONTRACT_VERSION,
             "schema_version": schema_version,
         },

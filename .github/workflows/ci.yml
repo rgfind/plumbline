@@ -11,6 +11,8 @@ on:
 
 jobs:
   test:
+    permissions:
+      contents: read
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
@@ -19,9 +21,7 @@ jobs:
           toolchain: 1.98.0
       - name: Record Rust toolchain
         run: rustc -Vv
-      - name: Formatting
-        run: cargo fmt --check
-      - name: Lints
-        run: cargo clippy --all-targets --locked -- -D warnings
-      - name: Tests
-        run: cargo test --locked
+      - name: Install reviewed plumbline
+        run: cargo install --path . --locked --force
+      - name: Verify declared CI policy
+        run: plumb verify --stage=ci --json

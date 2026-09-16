@@ -21,7 +21,7 @@ fn temp_tree(name: &str) -> PathBuf {
 
 fn document(branch: &str) -> String {
     format!(
-        r#"{{"config_version":1,"release":{{"branch":"{branch}","remote":"origin"}},"surfaces":[]}}"#
+        r#"{{"config_version":1,"release":{{"branch":"{branch}","remote":"origin","verification":{{"ci":[{{"id":"format","argv":["cargo","fmt","--check"],"timeout_seconds":120}}],"release":[{{"id":"publish","argv":["cargo","publish","--dry-run"],"timeout_seconds":600}}],"github_actions":{{"repository":"owner/repo","workflow_path":".github/workflows/ci.yml"}}}}}},"surfaces":[]}}"#
     )
 }
 

@@ -10,7 +10,7 @@
 //!   preflight  the publish stop-sign: run every gate that must hold at
 //!              `cargo publish` and exit non-zero unless all pass.
 
-use crate::cli::ConfigAction;
+use crate::cli::{ConfigAction, VerifyStage};
 use crate::config::{self, Capture, Config};
 use crate::diagnostic::{codes, Diagnostic};
 use crate::engine;
@@ -217,6 +217,12 @@ fn fixture_matches_binary(cfg: &Config) -> Result<(), Diagnostic> {
 // ---- preflight (the publish stop-sign) -------------------------------------
 
 pub fn cmd_preflight(cfg: &Config) -> Result<CommandResult, Diagnostic> {
+    let release = cfg.release.as_ref().ok_or_else(|| {
+        Diagnostic::new(
+            codes::RELEASE_CONFIG_MISSING,
+            "preflight requires a complete `release` configuration",
+        )
+    })?;
     type Gate<'a> = (
         &'a str,
         &'a str,
@@ -283,15 +289,158 @@ pub fn cmd_preflight(cfg: &Config) -> Result<CommandResult, Diagnostic> {
             }
         }
     }
+    let mut runner = crate::verification::SystemRunner;
+    let mut local_gates =
+        crate::verification::run_gates(&mut runner, &release.verification.ci, &cfg.root, "ci");
+    local_gates.extend(crate::verification::run_gates(
+        &mut runner,
+        &release.verification.release,
+        &cfg.root,
+        "release",
+    ));
+    for gate in local_gates {
+        if gate["status"] == "failed" {
+            failures += 1;
+            human.push(format!(
+                "FAIL {}: {}",
+                gate["id"].as_str().unwrap_or("command"),
+                gate["diagnostic_code"]
+                    .as_str()
+                    .unwrap_or("VERIFY_COMMAND_FAILED")
+            ));
+        } else {
+            human.push(format!("PASS {}", gate["id"].as_str().unwrap_or("command")));
+        }
+        records.push(gate);
+    }
+    let head_sha = crate::github::head_sha(&cfg.root).map_err(|_| {
+        Diagnostic::new(
+            codes::GIT_UNAVAILABLE,
+            "cannot read HEAD for GitHub Actions proof",
+        )
+    })?;
+    let mut github = crate::github::GhAdapter;
+    let proof = crate::github::GitHubAdapter::prove(
+        &mut github,
+        &release.verification.github_actions,
+        &release.branch,
+        &head_sha,
+    );
+    if proof["status"] == "failed" {
+        failures += 1;
+        human.push(format!(
+            "FAIL github-actions-proof: {}",
+            proof["diagnostic_code"]
+                .as_str()
+                .unwrap_or("CI_PROOF_UNAVAILABLE")
+        ));
+    } else {
+        human.push("PASS github-actions-proof".into());
+    }
+    records.push(proof);
     let report = json!({"operation": "preflight", "status": if failures == 0 { "passed" } else { "blocked" }, "gates": records});
     if failures == 0 {
         Ok(CommandResult::new(report, human.join("\n")))
     } else {
-        Err(Diagnostic::new(
-            codes::PREFLIGHT_BLOCKED,
-            format!("{failures} preflight gate(s) failed"),
+        let failed_codes = report["gates"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter(|gate| gate["status"] == "failed")
+            .filter_map(|gate| {
+                gate["diagnostic_code"]
+                    .as_str()
+                    .or_else(|| gate["diagnostic"]["code"].as_str())
+            })
+            .collect::<Vec<_>>();
+        let code = if failed_codes
+            .iter()
+            .all(|code| matches!(*code, "CI_PROOF_PENDING" | "CI_PROOF_TRANSIENT_FAILURE"))
+        {
+            code_for_gate(failed_codes[0]).unwrap_or(codes::PREFLIGHT_BLOCKED)
+        } else if failed_codes.iter().all(|code| {
+            matches!(
+                *code,
+                "VERIFY_COMMAND_UNAVAILABLE" | "GITHUB_CLI_UNAVAILABLE" | "CI_PROOF_UNAVAILABLE"
+            )
+        }) {
+            code_for_gate(failed_codes[0]).unwrap_or(codes::VERIFY_COMMAND_UNAVAILABLE)
+        } else {
+            codes::PREFLIGHT_BLOCKED
+        };
+        Err(Diagnostic::new(code, format!("{failures} preflight gate(s) failed")).with_data(report))
+    }
+}
+
+fn code_for_gate(name: &str) -> Option<crate::diagnostic::Code> {
+    Some(match name {
+        "VERIFY_COMMAND_UNAVAILABLE" => codes::VERIFY_COMMAND_UNAVAILABLE,
+        "GITHUB_CLI_UNAVAILABLE" => codes::GITHUB_CLI_UNAVAILABLE,
+        "CI_PROOF_UNAVAILABLE" => codes::CI_PROOF_UNAVAILABLE,
+        "CI_PROOF_PENDING" => codes::CI_PROOF_PENDING,
+        "CI_PROOF_TRANSIENT_FAILURE" => codes::CI_PROOF_TRANSIENT_FAILURE,
+        _ => return None,
+    })
+}
+
+/// Run only the configured local policy. This command deliberately has no
+/// GitHub adapter: a workflow uses it to create the CI evidence that preflight
+/// later checks, so querying that proof here would create a CI cycle.
+pub fn cmd_verify(cfg: &Config, stage: VerifyStage) -> Result<CommandResult, Diagnostic> {
+    let release = cfg.release.as_ref().ok_or_else(|| {
+        Diagnostic::new(
+            codes::RELEASE_CONFIG_MISSING,
+            "verify requires a complete `release` configuration",
         )
-        .with_data(report))
+    })?;
+    let mut runner = crate::verification::SystemRunner;
+    let mut gates =
+        crate::verification::run_gates(&mut runner, &release.verification.ci, &cfg.root, "ci");
+    if stage == VerifyStage::Release {
+        gates.extend(crate::verification::run_gates(
+            &mut runner,
+            &release.verification.release,
+            &cfg.root,
+            "release",
+        ));
+    }
+    let failed = gates
+        .iter()
+        .filter(|gate| gate["status"] == "failed")
+        .count();
+    let report = json!({
+        "operation": "verify",
+        "stage": stage.as_str(),
+        "status": if failed == 0 { "passed" } else { "blocked" },
+        "gates": gates,
+        "configured_ci_proof": {
+            "repository": release.verification.github_actions.repository,
+            "workflow_path": release.verification.github_actions.workflow_path,
+        },
+    });
+    if failed == 0 {
+        Ok(CommandResult::new(
+            report,
+            format!("verify {}: all local gates passed", stage.as_str()),
+        ))
+    } else {
+        let has_gate_failure = report["gates"].as_array().is_some_and(|items| {
+            items.iter().any(|gate| {
+                matches!(
+                    gate["diagnostic_code"].as_str(),
+                    Some("VERIFY_COMMAND_FAILED" | "VERIFY_COMMAND_TIMED_OUT")
+                )
+            })
+        });
+        let code = if has_gate_failure {
+            codes::PREFLIGHT_BLOCKED
+        } else {
+            codes::VERIFY_COMMAND_UNAVAILABLE
+        };
+        Err(
+            Diagnostic::new(code, format!("{failed} verification gate(s) failed"))
+                .with_data(report),
+        )
     }
 }
 

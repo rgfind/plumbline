@@ -1,5 +1,18 @@
 # plumbline
 
+## Release verification
+
+Run the declared local CI gates before a push:
+
+```text
+plumb verify --stage=ci --json
+```
+
+For a release candidate, push the commit, wait for the configured GitHub
+Actions workflow, then run `plumb preflight --json` and
+`plumb release --dry-run --json`. `plumb release --yes` is the separate,
+explicit tag mutation.
+
 Use `plumb` to check that the documentation in a Rust crate describes the
 binary that `cargo publish` will package. Run `plumb preflight` before you
 publish a crate to crates.io.

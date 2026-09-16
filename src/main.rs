@@ -33,10 +33,12 @@ mod commands;
 mod config;
 mod diagnostic;
 mod engine;
+mod github;
 mod markers;
 mod registry;
 mod release;
 mod result;
+mod verification;
 
 use config::Config;
 use std::process::ExitCode;
@@ -86,6 +88,7 @@ fn main() -> ExitCode {
                     cli::Verb::Capture if invocation.capture_check && invocation.yes => Err(diagnostic::Diagnostic::new(diagnostic::codes::INVALID_INPUT, "capture accepts exactly one mode: --check or --yes")),
                     cli::Verb::Capture if !invocation.capture_check && !invocation.yes => Err(diagnostic::Diagnostic::new(diagnostic::codes::MISSING_REQUIRED, "capture needs exactly one mode: `plumb capture --check` or `plumb capture --yes`")),
                     cli::Verb::Capture => commands::cmd_capture(&cfg, invocation.capture_check),
+                    cli::Verb::Verify => commands::cmd_verify(&cfg, invocation.verify_stage.expect("verify stage was checked by parser")),
                     cli::Verb::Preflight => commands::cmd_preflight(&cfg),
             cli::Verb::Release if invocation.dry_run && invocation.yes => Err(diagnostic::Diagnostic::new(diagnostic::codes::INVALID_INPUT, "release accepts --dry-run or --yes, not both")),
             cli::Verb::Release if invocation.dry_run => commands::cmd_release_dry_run(&cfg),

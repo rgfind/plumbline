@@ -43,6 +43,31 @@
         "family": "GATE",
         "meaning": "CHANGELOG.md has no accepted H2 heading for the package version"
       },
+      "CI_PROOF_FAILED": {
+        "exit": 2,
+        "family": "GATE",
+        "meaning": "the matching completed CI workflow run did not succeed"
+      },
+      "CI_PROOF_MISSING": {
+        "exit": 2,
+        "family": "GATE",
+        "meaning": "no matching completed CI workflow run exists for HEAD"
+      },
+      "CI_PROOF_PENDING": {
+        "exit": 4,
+        "family": "TRANSIENT",
+        "meaning": "the matching CI workflow run is not complete"
+      },
+      "CI_PROOF_TRANSIENT_FAILURE": {
+        "exit": 4,
+        "family": "TRANSIENT",
+        "meaning": "GitHub proof had a temporary transport, rate-limit, or server failure"
+      },
+      "CI_PROOF_UNAVAILABLE": {
+        "exit": 3,
+        "family": "ENV",
+        "meaning": "GitHub returned an untrusted authentication, permission, malformed, or unknown-state answer"
+      },
       "CLAIM_DRIFT": {
         "exit": 2,
         "family": "GATE",
@@ -82,6 +107,11 @@
         "exit": 3,
         "family": "ENV",
         "meaning": "the committed fixture could not be read or parsed"
+      },
+      "GITHUB_CLI_UNAVAILABLE": {
+        "exit": 3,
+        "family": "ENV",
+        "meaning": "the GitHub CLI could not start for configured CI proof"
       },
       "GIT_UNAVAILABLE": {
         "exit": 3,
@@ -218,6 +248,21 @@
         "family": "USAGE",
         "meaning": "legacy invalid command input"
       },
+      "VERIFY_COMMAND_FAILED": {
+        "exit": 2,
+        "family": "GATE",
+        "meaning": "a configured verification command exited non-zero"
+      },
+      "VERIFY_COMMAND_TIMED_OUT": {
+        "exit": 2,
+        "family": "GATE",
+        "meaning": "a configured verification command exceeded its timeout"
+      },
+      "VERIFY_COMMAND_UNAVAILABLE": {
+        "exit": 3,
+        "family": "ENV",
+        "meaning": "a configured verification program could not start"
+      },
       "WORKDIR_UNREADABLE": {
         "exit": 3,
         "family": "ENV",
@@ -334,6 +379,13 @@
           "subcommands": null
         },
         {
+          "flags": [
+            "--stage"
+          ],
+          "name": "verify",
+          "subcommands": null
+        },
+        {
           "flags": [],
           "name": "preflight",
           "subcommands": null
@@ -439,7 +491,6 @@
           1,
           2,
           3,
-          4,
           5,
           6
         ]
@@ -474,10 +525,7 @@
           0,
           1,
           2,
-          3,
-          4,
-          5,
-          6
+          3
         ]
       },
       "check": {
@@ -507,10 +555,7 @@
           0,
           1,
           2,
-          3,
-          4,
-          5,
-          6
+          3
         ]
       },
       "config": {
@@ -545,7 +590,6 @@
           1,
           2,
           3,
-          4,
           5,
           6
         ],
@@ -628,7 +672,6 @@
           1,
           2,
           3,
-          4,
           5,
           6
         ]
@@ -661,7 +704,6 @@
           1,
           2,
           3,
-          4,
           5,
           6
         ]
@@ -695,8 +737,7 @@
           2,
           3,
           4,
-          5,
-          6
+          5
         ]
       },
       "release": {
@@ -731,8 +772,7 @@
           2,
           3,
           4,
-          5,
-          6
+          5
         ]
       },
       "robot-docs": {
@@ -763,7 +803,6 @@
           1,
           2,
           3,
-          4,
           5,
           6
         ]
@@ -798,9 +837,40 @@
           1,
           2,
           3,
-          4,
           5,
           6
+        ]
+      },
+      "verify": {
+        "description": "run declared local verification gates",
+        "examples": [
+          "plumb verify --json"
+        ],
+        "flags": [
+          "--stage"
+        ],
+        "meta_fields": [
+          "request_id",
+          "ts_iso",
+          "elapsed_ms",
+          "contract_version",
+          "schema_version"
+        ],
+        "mutates": false,
+        "needs_config": true,
+        "output_modes": [
+          "text",
+          "json"
+        ],
+        "payload_schema": {
+          "type": "object"
+        },
+        "positionals": [],
+        "possible_exit_codes": [
+          0,
+          1,
+          2,
+          3
         ]
       }
     },
@@ -809,10 +879,11 @@
   "errors": [],
   "meta": {
     "contract_version": "0.1",
-    "elapsed_ms": 1,
-    "request_id": "req-c760-18d58fe509ab1938",
+    "data_hash": "3a4c4881742af83ceefee37c176a9cb1015161dab377f7eb0400db3141d17736",
+    "elapsed_ms": 0,
+    "request_id": "req-e860-18d5af75774de420",
     "schema_version": 1,
-    "ts_iso": "2026-09-15T17:50:40Z"
+    "ts_iso": "2026-09-16T03:29:05Z"
   },
   "ok": true,
   "tool_version": "0.0.3",

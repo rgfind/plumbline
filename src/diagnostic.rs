@@ -159,6 +159,10 @@ pub mod codes {
         ALLOWLIST_UNKNOWN: Config = "the package_allowlist value is not recognized",
         RELEASE_CONFIG_MISSING: Config = "release was requested but the config has no release object",
 
+        VERIFY_COMMAND_UNAVAILABLE: Env = "a configured verification program could not start",
+        GITHUB_CLI_UNAVAILABLE: Env = "the GitHub CLI could not start for configured CI proof",
+        CI_PROOF_UNAVAILABLE: Env = "GitHub returned an untrusted authentication, permission, malformed, or unknown-state answer",
+
         WORKDIR_UNREADABLE: Env = "the working directory could not be determined",
         FIXTURE_UNREADABLE: Env = "the committed fixture could not be read or parsed",
         SURFACE_UNREADABLE: Env = "a doc surface could not be read",
@@ -186,6 +190,12 @@ pub mod codes {
         BLOCK_STALE: Gate = "a generated block differs from a fresh render",
         PREFLIGHT_FAILED: Gate = "one or more gates failed (the aggregate; the gate codes are the ground truth)",
         PREFLIGHT_BLOCKED: Gate = "one or more preflight gates blocked a release",
+        VERIFY_COMMAND_FAILED: Gate = "a configured verification command exited non-zero",
+        VERIFY_COMMAND_TIMED_OUT: Gate = "a configured verification command exceeded its timeout",
+        CI_PROOF_MISSING: Gate = "no matching completed CI workflow run exists for HEAD",
+        CI_PROOF_FAILED: Gate = "the matching completed CI workflow run did not succeed",
+        CI_PROOF_TRANSIENT_FAILURE: Transient = "GitHub proof had a temporary transport, rate-limit, or server failure",
+        CI_PROOF_PENDING: Transient = "the matching CI workflow run is not complete",
         RELEASE_BRANCH_MISMATCH: Gate = "HEAD is detached or is not on the configured release branch",
         UPSTREAM_NOT_SYNCED: Gate = "the configured release branch is ahead of or behind its upstream",
         CHANGELOG_VERSION_MISSING: Gate = "CHANGELOG.md has no accepted H2 heading for the package version",
