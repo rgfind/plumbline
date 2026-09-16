@@ -89,7 +89,7 @@ where
         )
     })?;
 
-    ensure_clean(cfg, runner)?;
+    preflight()?;
     ensure_branch(cfg, runner, &release.branch)?;
     ensure_upstream_synced(cfg, runner)?;
 
@@ -108,8 +108,6 @@ where
         });
     }
     let remote_url = remote_url(cfg, runner, &release.remote)?;
-
-    preflight()?;
 
     run_ok(
         runner,
@@ -159,14 +157,13 @@ where
             "release needs a `release` object with `branch` and `remote` settings",
         )
     })?;
-    ensure_clean(cfg, runner)?;
+    preflight()?;
     ensure_branch(cfg, runner, &release.branch)?;
     ensure_upstream_synced(cfg, runner)?;
     let version = package_version(cfg, runner)?;
     ensure_changelog_entry(cfg, &version)?;
     let tag = format!("v{version}");
     let state = release_state(cfg, runner, &tag, &release.remote, &release.branch)?;
-    preflight()?;
     Ok(ReleaseResult {
         version,
         tag,
@@ -175,25 +172,6 @@ where
         remote_url: None,
         already_complete: state.already_complete,
     })
-}
-
-fn ensure_clean<R: CommandRunner>(cfg: &Config, runner: &mut R) -> Result<(), Diagnostic> {
-    let out = run_ok(
-        runner,
-        "git",
-        &strings(["status", "--porcelain"]),
-        &cfg.root,
-        codes::GIT_UNAVAILABLE,
-        "read worktree status",
-    )?;
-    if stdout(out).is_empty() {
-        Ok(())
-    } else {
-        Err(Diagnostic::new(
-            codes::WORKTREE_DIRTY,
-            "commit or stash changes before release",
-        ))
-    }
 }
 
 fn ensure_branch<R: CommandRunner>(
@@ -803,7 +781,6 @@ mod tests {
             manifest.display()
         );
         vec![
-            ok(""),
             ok("main\n"),
             ok("origin/main\n"),
             ok("0\t0\n"),
@@ -928,9 +905,8 @@ mod tests {
     #[test]
     fn validation_failures_stop_before_tag_creation() {
         let cases: Vec<(&str, usize, Reply, crate::diagnostic::Code)> = vec![
-            ("dirty", 0, ok(" M src/main.rs\n"), codes::WORKTREE_DIRTY),
-            ("branch", 1, failed(1), codes::RELEASE_BRANCH_MISMATCH),
-            ("upstream", 2, failed(1), codes::UPSTREAM_NOT_SYNCED),
+            ("branch", 0, failed(1), codes::RELEASE_BRANCH_MISMATCH),
+            ("upstream", 1, failed(1), codes::UPSTREAM_NOT_SYNCED),
         ];
         for (name, position, replacement, expected) in cases {
             let (cfg, mut replies) = prepared(name);
@@ -963,7 +939,7 @@ mod tests {
     #[test]
     fn failed_push_keeps_local_tag_and_never_records_remote_tag() {
         let (cfg, mut replies) = prepared("push-failure");
-        replies[10] = failed(1);
+        replies[9] = failed(1);
         let mut runner = FakeRunner::new(replies);
         let error = run(&cfg, &mut runner, || Ok(())).unwrap_err();
         assert_eq!(error.code.name, codes::PUSH_FAILED.name);
@@ -975,7 +951,7 @@ mod tests {
     fn completed_release_is_an_idempotent_no_op() {
         let (cfg, mut replies) = prepared("completed-release");
         let tag = "v1.2.3";
-        replies.truncate(6);
+        replies.truncate(5);
         replies.extend([
             ok(""),
             ok("tag-object\n"),
@@ -986,10 +962,7 @@ mod tests {
             ok("0123456789abcdef\trefs/heads/main\n"),
         ]);
         let mut runner = FakeRunner::new(replies);
-        let result = run(&cfg, &mut runner, || {
-            panic!("a completed release must skip preflight")
-        })
-        .unwrap();
+        let result = run(&cfg, &mut runner, || Ok(())).unwrap();
 
         assert_eq!(result.tag, tag);
         assert!(result.already_complete);
@@ -1004,7 +977,7 @@ mod tests {
     #[test]
     fn local_only_release_tag_is_an_immutable_conflict() {
         let (cfg, mut replies) = prepared("local-only-tag");
-        replies.truncate(6);
+        replies.truncate(5);
         replies.extend([
             ok(""),
             ok("tag-object\n"),
@@ -1079,10 +1052,7 @@ mod tests {
             cargo_replies: local_cargo_replies(&cfg),
             fail_push: false,
         };
-        let result = run(&cfg, &mut retry, || {
-            panic!("a completed release retry must not run preflight")
-        })
-        .unwrap();
+        let result = run(&cfg, &mut retry, || Ok(())).unwrap();
 
         assert!(result.already_complete);
         assert_eq!(result.commit, git(&cfg.root, &["rev-parse", "HEAD"]));
