@@ -128,7 +128,7 @@ pub const COMMANDS: &[CommandSpec] = &[
         verb: Verb::Preflight,
         name: "preflight",
         summary: "run the ordered release gates",
-        flags: &[],
+        flags: &["--wait"],
         needs_config: true,
     },
     CommandSpec {
@@ -198,6 +198,7 @@ pub struct Invocation {
     pub config_path: Option<PathBuf>,
     pub capture_check: bool,
     pub verify_stage: Option<VerifyStage>,
+    pub preflight_wait: bool,
     pub help: bool,
     pub version: bool,
     pub schema_command: Option<String>,
@@ -246,6 +247,7 @@ pub fn parse(args: &[String]) -> Result<Invocation, Diagnostic> {
     let mut version = false;
     let mut capture_check = false;
     let mut verify_stage = None;
+    let mut preflight_wait = false;
     let mut verb = None;
     let mut schema_command = None;
     let mut robot_docs_guide = false;
@@ -321,6 +323,14 @@ pub fn parse(args: &[String]) -> Result<Invocation, Diagnostic> {
                 ));
             }
             verify_stage = Some(VerifyStage::parse(&value(token, args, &mut i, "--stage")?)?);
+        } else if token == "--wait" {
+            if verb != Some(Verb::Preflight) || preflight_wait {
+                return Err(Diagnostic::new(
+                    codes::UNKNOWN_FLAG,
+                    "--wait is declared only once for preflight",
+                ));
+            }
+            preflight_wait = true;
         } else if token == "--yes" || token == "-y" {
             if !matches!(verb, Some(Verb::Capture | Verb::Release))
                 && !matches!(config_action, Some(ConfigAction::Set | ConfigAction::Patch))
@@ -417,6 +427,7 @@ pub fn parse(args: &[String]) -> Result<Invocation, Diagnostic> {
         config_path,
         capture_check,
         verify_stage,
+        preflight_wait,
         help,
         version,
         schema_command,
@@ -604,5 +615,21 @@ mod tests {
         assert_eq!(before.verify_stage, Some(VerifyStage::Ci));
         let after = parse(&strings(&["verify", "--stage", "release"])).unwrap();
         assert_eq!(after.verify_stage, Some(VerifyStage::Release));
+    }
+
+    #[test]
+    fn preflight_wait_is_command_local() {
+        assert!(
+            parse(&strings(&["preflight", "--wait"]))
+                .unwrap()
+                .preflight_wait
+        );
+        assert_eq!(
+            parse(&strings(&["verify", "--wait", "--stage=ci"]))
+                .unwrap_err()
+                .code
+                .name,
+            "UNKNOWN_FLAG"
+        );
     }
 }

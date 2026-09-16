@@ -2,9 +2,10 @@
 
 use crate::config::GitHubActions;
 use serde_json::{json, Value};
+use std::io::Read;
 use std::path::Path;
 use std::process::{Command, Stdio};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 pub trait GitHubAdapter {
     fn prove(&mut self, proof: &GitHubActions, branch: &str, head_sha: &str) -> Value;
@@ -14,6 +15,35 @@ pub struct GhAdapter;
 
 impl GitHubAdapter for GhAdapter {
     fn prove(&mut self, proof: &GitHubActions, branch: &str, head_sha: &str) -> Value {
+        self.prove_once(proof, branch, head_sha)
+    }
+}
+
+impl GhAdapter {
+    /// Poll only the external CI proof. Local preflight gates run once before
+    /// this method is called and are never repeated by `--wait`.
+    pub fn prove_with_wait(
+        &mut self,
+        proof: &GitHubActions,
+        branch: &str,
+        head_sha: &str,
+        budget: Duration,
+    ) -> Value {
+        let started = Instant::now();
+        loop {
+            let result = self.prove_once(proof, branch, head_sha);
+            let retryable = matches!(
+                result["diagnostic_code"].as_str(),
+                Some("CI_PROOF_MISSING" | "CI_PROOF_PENDING" | "CI_PROOF_TRANSIENT_FAILURE")
+            );
+            if !retryable || started.elapsed() >= budget {
+                return result;
+            }
+            std::thread::sleep(Duration::from_secs(1));
+        }
+    }
+
+    fn prove_once(&mut self, proof: &GitHubActions, branch: &str, head_sha: &str) -> Value {
         let workflows = match request(&format!("repos/{}/actions/workflows", proof.repository)) {
             Ok(value) => value,
             Err(code) => return failure(proof, head_sha, code, None),
@@ -59,17 +89,51 @@ fn request(endpoint: &str) -> Result<Value, &'static str> {
 }
 
 fn run_gh(endpoint: &str) -> Result<String, &'static str> {
-    let output = Command::new("gh")
+    let mut child = Command::new("gh")
         .args(["api", endpoint])
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::null())
-        .output()
+        .spawn()
         .map_err(|_| "GITHUB_CLI_UNAVAILABLE")?;
-    if !output.status.success() {
+    let Some(mut stdout) = child.stdout.take() else {
         return Err("CI_PROOF_UNAVAILABLE");
+    };
+    let reader = std::thread::spawn(move || {
+        let mut bytes = Vec::new();
+        stdout.read_to_end(&mut bytes).map(|_| bytes)
+    });
+    let started = Instant::now();
+    loop {
+        match child.try_wait() {
+            Ok(Some(status)) if status.success() => {
+                let bytes = reader
+                    .join()
+                    .map_err(|_| "CI_PROOF_UNAVAILABLE")?
+                    .map_err(|_| "CI_PROOF_UNAVAILABLE")?;
+                return String::from_utf8(bytes).map_err(|_| "CI_PROOF_UNAVAILABLE");
+            }
+            Ok(Some(_)) => {
+                let _ = reader.join();
+                return Err("CI_PROOF_UNAVAILABLE");
+            }
+            Ok(None) if started.elapsed() < Duration::from_secs(30) => {
+                std::thread::sleep(Duration::from_millis(20));
+            }
+            Ok(None) => {
+                let _ = child.kill();
+                let _ = child.wait();
+                let _ = reader.join();
+                return Err("CI_PROOF_TRANSIENT_FAILURE");
+            }
+            Err(_) => {
+                let _ = child.kill();
+                let _ = child.wait();
+                let _ = reader.join();
+                return Err("CI_PROOF_UNAVAILABLE");
+            }
+        }
     }
-    String::from_utf8(output.stdout).map_err(|_| "CI_PROOF_UNAVAILABLE")
 }
 
 pub fn head_sha(root: &Path) -> Result<String, ()> {
@@ -89,7 +153,7 @@ pub fn head_sha(root: &Path) -> Result<String, ()> {
 pub fn evaluate_runs(proof: &GitHubActions, head_sha: &str, runs: &[Value]) -> Value {
     let run = runs
         .iter()
-        .filter(|run| run["head_sha"] == head_sha)
+        .filter(|run| run["head_sha"] == head_sha && run["event"] == "push")
         .max_by_key(|run| {
             run["run_attempt"].as_u64().unwrap_or(0) * 1_000_000_000
                 + run["id"].as_u64().unwrap_or(0)
@@ -142,20 +206,25 @@ mod tests {
 
     #[test]
     fn exact_commit_success_is_required() {
-        let wrong = json!({"id":1,"head_sha":"other","status":"completed","conclusion":"success"});
+        let wrong = json!({"id":1,"head_sha":"other","event":"push","status":"completed","conclusion":"success"});
         assert_eq!(
             evaluate_runs(&proof(), "head", &[wrong])["diagnostic_code"],
             "CI_PROOF_MISSING"
         );
-        let pending = json!({"id":2,"head_sha":"head","status":"in_progress","html_url":"https://example.test/run"});
+        let pending = json!({"id":2,"head_sha":"head","event":"push","status":"in_progress","html_url":"https://example.test/run"});
         assert_eq!(
             evaluate_runs(&proof(), "head", &[pending])["diagnostic_code"],
             "CI_PROOF_PENDING"
         );
-        let success = json!({"id":3,"head_sha":"head","status":"completed","conclusion":"success","html_url":"https://example.test/run"});
+        let success = json!({"id":3,"head_sha":"head","event":"push","status":"completed","conclusion":"success","html_url":"https://example.test/run"});
         assert_eq!(
             evaluate_runs(&proof(), "head", &[success])["status"],
             "passed"
+        );
+        let pull_request = json!({"id":4,"head_sha":"head","event":"pull_request","status":"completed","conclusion":"success"});
+        assert_eq!(
+            evaluate_runs(&proof(), "head", &[pull_request])["diagnostic_code"],
+            "CI_PROOF_MISSING"
         );
     }
 }

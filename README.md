@@ -8,8 +8,9 @@ Run the declared local CI gates before a push:
 plumb verify --stage=ci --json
 ```
 
-For a release candidate, push the commit, wait for the configured GitHub
-Actions workflow, then run `plumb preflight --json` and
+For a release candidate, push the commit, then run `plumb preflight --wait --json`
+to poll only its configured GitHub Actions proof for up to 30 seconds. Use
+`plumb preflight --json` when the proof must be checked once. Then run
 `plumb release --dry-run --json`. `plumb release --yes` is the separate,
 explicit tag mutation.
 

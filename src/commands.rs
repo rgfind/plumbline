@@ -216,7 +216,7 @@ fn fixture_matches_binary(cfg: &Config) -> Result<(), Diagnostic> {
 
 // ---- preflight (the publish stop-sign) -------------------------------------
 
-pub fn cmd_preflight(cfg: &Config) -> Result<CommandResult, Diagnostic> {
+pub fn cmd_preflight(cfg: &Config, wait_for_ci: bool) -> Result<CommandResult, Diagnostic> {
     let release = cfg.release.as_ref().ok_or_else(|| {
         Diagnostic::new(
             codes::RELEASE_CONFIG_MISSING,
@@ -320,12 +320,21 @@ pub fn cmd_preflight(cfg: &Config) -> Result<CommandResult, Diagnostic> {
         )
     })?;
     let mut github = crate::github::GhAdapter;
-    let proof = crate::github::GitHubAdapter::prove(
-        &mut github,
-        &release.verification.github_actions,
-        &release.branch,
-        &head_sha,
-    );
+    let proof = if wait_for_ci {
+        github.prove_with_wait(
+            &release.verification.github_actions,
+            &release.branch,
+            &head_sha,
+            std::time::Duration::from_secs(30),
+        )
+    } else {
+        crate::github::GitHubAdapter::prove(
+            &mut github,
+            &release.verification.github_actions,
+            &release.branch,
+            &head_sha,
+        )
+    };
     if proof["status"] == "failed" {
         failures += 1;
         human.push(format!(
@@ -338,7 +347,7 @@ pub fn cmd_preflight(cfg: &Config) -> Result<CommandResult, Diagnostic> {
         human.push("PASS github-actions-proof".into());
     }
     records.push(proof);
-    let report = json!({"operation": "preflight", "status": if failures == 0 { "passed" } else { "blocked" }, "gates": records});
+    let report = json!({"operation": "preflight", "waited_for_ci": wait_for_ci, "status": if failures == 0 { "passed" } else { "blocked" }, "gates": records});
     if failures == 0 {
         Ok(CommandResult::new(report, human.join("\n")))
     } else {
@@ -449,7 +458,7 @@ pub fn cmd_verify(cfg: &Config, stage: VerifyStage) -> Result<CommandResult, Dia
 /// same complete gate report as the standalone command.
 pub fn cmd_release(cfg: &Config) -> Result<CommandResult, Diagnostic> {
     let mut runner = release::SystemRunner;
-    let release = release::run(cfg, &mut runner, || cmd_preflight(cfg).map(|_| ()))?;
+    let release = release::run(cfg, &mut runner, || cmd_preflight(cfg, false).map(|_| ()))?;
     let status = if release.already_complete {
         "already_complete"
     } else {
@@ -472,7 +481,7 @@ pub fn cmd_release(cfg: &Config) -> Result<CommandResult, Diagnostic> {
 
 pub fn cmd_release_dry_run(cfg: &Config) -> Result<CommandResult, Diagnostic> {
     let mut runner = release::SystemRunner;
-    let release = release::run_dry(cfg, &mut runner, || cmd_preflight(cfg).map(|_| ()))?;
+    let release = release::run_dry(cfg, &mut runner, || cmd_preflight(cfg, false).map(|_| ()))?;
     Ok(CommandResult::new(
         json!({"operation":"release","mode":"dry-run","status":"passed","version":release.version,"tag":release.tag,"commit":release.commit,"remote":release.remote,"completed_state_changes":[],"skipped_state_changes":[{"id":"create-annotated-tag","reason":"dry-run"},{"id":"atomic-push","reason":"dry-run"}]}),
         "release dry-run: checks passed; no tag or push was performed",
