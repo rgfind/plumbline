@@ -67,6 +67,7 @@ impl GhAdapter {
         let empty = Vec::new();
         evaluate_runs(
             proof,
+            branch,
             head_sha,
             runs["workflow_runs"].as_array().unwrap_or(&empty),
         )
@@ -150,10 +151,12 @@ pub fn head_sha(root: &Path) -> Result<String, ()> {
         .map_err(|_| ())
 }
 
-pub fn evaluate_runs(proof: &GitHubActions, head_sha: &str, runs: &[Value]) -> Value {
+pub fn evaluate_runs(proof: &GitHubActions, branch: &str, head_sha: &str, runs: &[Value]) -> Value {
     let run = runs
         .iter()
-        .filter(|run| run["head_sha"] == head_sha && run["event"] == "push")
+        .filter(|run| {
+            run["head_sha"] == head_sha && run["head_branch"] == branch && run["event"] == "push"
+        })
         .max_by_key(|run| {
             run["run_attempt"].as_u64().unwrap_or(0) * 1_000_000_000
                 + run["id"].as_u64().unwrap_or(0)
@@ -206,24 +209,29 @@ mod tests {
 
     #[test]
     fn exact_commit_success_is_required() {
-        let wrong = json!({"id":1,"head_sha":"other","event":"push","status":"completed","conclusion":"success"});
+        let wrong = json!({"id":1,"head_sha":"other","head_branch":"main","event":"push","status":"completed","conclusion":"success"});
         assert_eq!(
-            evaluate_runs(&proof(), "head", &[wrong])["diagnostic_code"],
+            evaluate_runs(&proof(), "main", "head", &[wrong])["diagnostic_code"],
             "CI_PROOF_MISSING"
         );
-        let pending = json!({"id":2,"head_sha":"head","event":"push","status":"in_progress","html_url":"https://example.test/run"});
+        let pending = json!({"id":2,"head_sha":"head","head_branch":"main","event":"push","status":"in_progress","html_url":"https://example.test/run"});
         assert_eq!(
-            evaluate_runs(&proof(), "head", &[pending])["diagnostic_code"],
+            evaluate_runs(&proof(), "main", "head", &[pending])["diagnostic_code"],
             "CI_PROOF_PENDING"
         );
-        let success = json!({"id":3,"head_sha":"head","event":"push","status":"completed","conclusion":"success","html_url":"https://example.test/run"});
+        let success = json!({"id":3,"head_sha":"head","head_branch":"main","event":"push","status":"completed","conclusion":"success","html_url":"https://example.test/run"});
         assert_eq!(
-            evaluate_runs(&proof(), "head", &[success])["status"],
+            evaluate_runs(&proof(), "main", "head", &[success])["status"],
             "passed"
         );
-        let pull_request = json!({"id":4,"head_sha":"head","event":"pull_request","status":"completed","conclusion":"success"});
+        let pull_request = json!({"id":4,"head_sha":"head","head_branch":"main","event":"pull_request","status":"completed","conclusion":"success"});
         assert_eq!(
-            evaluate_runs(&proof(), "head", &[pull_request])["diagnostic_code"],
+            evaluate_runs(&proof(), "main", "head", &[pull_request])["diagnostic_code"],
+            "CI_PROOF_MISSING"
+        );
+        let wrong_branch = json!({"id":5,"head_sha":"head","head_branch":"release","event":"push","status":"completed","conclusion":"success"});
+        assert_eq!(
+            evaluate_runs(&proof(), "main", "head", &[wrong_branch])["diagnostic_code"],
             "CI_PROOF_MISSING"
         );
     }
