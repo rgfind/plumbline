@@ -16,4 +16,6 @@ fn workflows_call_the_declared_policy_in_order() {
     let preflight = release.find("plumb preflight").unwrap();
     let publish = release.find("cargo publish --locked").unwrap();
     assert!(preflight < publish);
+    assert!(release.contains("actions: read"));
+    assert!(release.contains("GH_TOKEN: ${{ github.token }}"));
 }
