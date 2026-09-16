@@ -4,7 +4,7 @@ use crate::config::GitHubActions;
 use serde_json::{json, Value};
 use std::path::Path;
 use std::process::{Command, Stdio};
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 pub trait GitHubAdapter {
     fn prove(&mut self, proof: &GitHubActions, branch: &str, head_sha: &str) -> Value;
@@ -59,34 +59,17 @@ fn request(endpoint: &str) -> Result<Value, &'static str> {
 }
 
 fn run_gh(endpoint: &str) -> Result<String, &'static str> {
-    let mut child = Command::new("gh")
+    let output = Command::new("gh")
         .args(["api", endpoint])
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::null())
-        .spawn()
+        .output()
         .map_err(|_| "GITHUB_CLI_UNAVAILABLE")?;
-    let started = Instant::now();
-    loop {
-        match child.try_wait() {
-            Ok(Some(status)) if status.success() => {
-                let output = child
-                    .wait_with_output()
-                    .map_err(|_| "CI_PROOF_UNAVAILABLE")?;
-                return String::from_utf8(output.stdout).map_err(|_| "CI_PROOF_UNAVAILABLE");
-            }
-            Ok(Some(_)) => return Err("CI_PROOF_UNAVAILABLE"),
-            Ok(None) if started.elapsed() < Duration::from_secs(30) => {
-                std::thread::sleep(Duration::from_millis(20))
-            }
-            Ok(None) => {
-                let _ = child.kill();
-                let _ = child.wait();
-                return Err("CI_PROOF_TRANSIENT_FAILURE");
-            }
-            Err(_) => return Err("CI_PROOF_UNAVAILABLE"),
-        }
+    if !output.status.success() {
+        return Err("CI_PROOF_UNAVAILABLE");
     }
+    String::from_utf8(output.stdout).map_err(|_| "CI_PROOF_UNAVAILABLE")
 }
 
 pub fn head_sha(root: &Path) -> Result<String, ()> {
